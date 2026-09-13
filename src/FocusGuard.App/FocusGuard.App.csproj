@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>FocusGuard.App</RootNamespace>
+    <AssemblyName>FocusGuard</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.0.0</Version>
+    <AssemblyTitle>FocusGuard</AssemblyTitle>
+    <Product>FocusGuard</Product>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- exe 的 Win32 图标：资源管理器 / 任务栏 / 任务管理器 / 快捷方式 -->
+    <ApplicationIcon>Resources\app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Resources\app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FocusGuard.Core\FocusGuard.Core.csproj" />
+  </ItemGroup>
+
+</Project>
