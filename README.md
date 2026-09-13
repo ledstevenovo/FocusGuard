@@ -176,6 +176,7 @@ dist\FocusGuard.exe --remove-legacy-deny
 ```
 FocusGuard/
 ├── FocusGuard.sln
+├── .github/workflows/release.yml   推送 v* 标签 → 自动构建并发布 Release
 ├── src/FocusGuard.Core/             业务逻辑（net7.0，无 WPF 依赖，全部可测）
 │   ├── HostsFile.cs                 字节级区块增删（纯函数）
 │   ├── HostsBlocker.cs              hosts 读写 + 保留 DACL 的原子替换 + 校验过的备份
@@ -214,3 +215,19 @@ dotnet run --project tests/FocusGuard.Tests -c Release
 
 `dotnet publish` 后会用 SHA256 对比 `dist/` 与 `bin/Release/` 的产物，并检查成品内含最新文案，
 避免"改了源码但成品是旧的"。
+
+---
+
+## 发布
+
+版本发布由 GitHub Actions 自动完成：给要发布的提交打上 `v` 开头的标签并推送即可。
+
+```bash
+git tag v1.5.0
+git push origin v1.5.0
+```
+
+Actions 会在托管的 Windows 环境执行与「快速开始」相同的构建命令，再做一步自包含发布
+（`-r win-x64 --self-contained true`，标签中的版本号经 `-p:Version` 注入成品），
+打包为 `FocusGuard-v<版本>-win-x64.zip`（不含 pdb），自动创建 Release 并上传附件。
+本地 `dotnet publish -o dist` 流程不受任何影响。

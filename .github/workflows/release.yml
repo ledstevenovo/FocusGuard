@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 7 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 7.0.x
+
+      - name: Build solution (same as local flow)
+        run: dotnet build FocusGuard.sln -c Release
+
+      - name: Publish self-contained build
+        shell: pwsh
+        run: >
+          dotnet publish src/FocusGuard.App/FocusGuard.App.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:Version="$($env:TAG -replace '^v','')"
+          -o dist-release
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:TAG -replace '^v', ''
+          $folder = "FocusGuard-v$version"
+          New-Item -ItemType Directory -Path "stage/$folder" -Force | Out-Null
+          Get-ChildItem dist-release -Exclude *.pdb |
+            Copy-Item -Destination "stage/$folder"
+          tar -a -c -f "$folder-win-x64.zip" -C stage $folder
+          Write-Host '=== zip contents ==='
+          tar -tf "$folder-win-x64.zip"
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:TAG -replace '^v', ''
+          $zip = "FocusGuard-v$version-win-x64.zip"
+          gh release view $env:TAG 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG $zip --clobber
+          } else {
+            gh release create $env:TAG $zip --title "FocusGuard $env:TAG" --generate-notes
+          }
