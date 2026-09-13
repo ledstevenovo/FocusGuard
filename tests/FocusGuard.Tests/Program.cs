@@ -1314,6 +1314,28 @@ Check("M5 开启文件锁定但目标不存在：明确跳过且不留恢复记�
     finally { Nuke(dir); }
 });
 
+Check("M6 RID-500 账户的 deny ACE 用 LA 别名表示，检测必须命中（CI 实测回归）", () =>
+{
+    // CI 诊断实测：runner 是内置 Administrator（RID-500），icacls /save 把它的 deny ACE
+    // 写成 (D;;0x1200a9;;;LA) 而不是完整 SID —— 修复前 G1/G2 在 CI 上因此检测到 0 条。
+    var ciDacl = "D:AI(D;;0x1200a9;;;LA)(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1d0156;;;LA)" +
+                 "(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;FA;;;LA)";
+    var rid500 = "S-1-5-21-3699639565-2515463329-295617607-500";
+
+    AssertEqual(1, LegacyAclCheck.CountDenyAcesForSid(ciDacl, rid500),
+        "RID-500 账户在 CI 形态的 DACL 里应命中 1 条 deny（经 LA 别名）");
+    AssertEqual(0, LegacyAclCheck.CountDenyAcesForSid(ciDacl, "S-1-5-21-3699639565-2515463329-295617607-1001"),
+        "LA 别名不得被其他账户（非 RID-500）误匹配");
+
+    var localDacl = "D:AI(A;ID;FA;;;BA)(D;;RX;;;S-1-5-21-1-2-3-1001)";
+    AssertEqual(1, LegacyAclCheck.CountDenyAcesForSid(localDacl, "S-1-5-21-1-2-3-1001"),
+        "普通账户的完整 SID 形态应照常命中");
+
+    var me = LegacyAclCheck.CurrentUserSid();
+    AssertTrue(me is not null && me.StartsWith("S-", StringComparison.Ordinal),
+        "CurrentUserSid 应返回合法 SID，实际：" + (me ?? "null"));
+});
+
 Console.WriteLine();
 Console.WriteLine($"====  通过 {passed} 项，失败 {failures.Count} 项  ====");
 if (failures.Count > 0)

@@ -1,3 +1,4 @@
+using System.Security.Principal;
 using System.Text.RegularExpressions;
 
 namespace FocusGuard.Core;
@@ -13,20 +14,17 @@ public sealed record LegacyAclFinding(string FilePath, string Detail);
 /// </summary>
 public static class LegacyAclCheck
 {
-    private static readonly Regex SidPattern = new(@"S-\d+-\d+(?:-\d+)+", RegexOptions.Compiled);
     private static readonly Regex AcePattern = new(@"\([AD];[^)]*\)", RegexOptions.Compiled);
 
     public static string? CurrentUserSid()
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
         try
         {
-            var result = CommandRunner.Run("whoami", "/user");
-            if (!result.Ok)
-            {
-                return null;
-            }
-            var matches = SidPattern.Matches(result.StdOut);
-            return matches.Count == 0 ? null : matches[^1].Value;
+            return WindowsIdentity.GetCurrent().User?.Value;
         }
         catch
         {
@@ -65,14 +63,24 @@ public static class LegacyAclCheck
         return findings;
     }
 
-    private static int CountDenyAcesForSid(string dacl, string sid)
+    internal static int CountDenyAcesForSid(string dacl, string sid)
     {
+        // 同一个账户在 SDDL 里可能有两种写法：
+        //   - 完整 SID 字符串（普通账户，如本地标准管理员）
+        //   - 已知别名 —— 当账户是内置 Administrator（RID-500）时，icacls /save 会写成 LA，
+        //     CI 的 runner 恰好就是这种账户（实测：S-1-5-21-...-500 在 /save 输出里是 (D;;...;;;LA)）
+        var identities = new List<string> { sid };
+        if (sid.EndsWith("-500", StringComparison.Ordinal))
+        {
+            identities.Add("LA");
+        }
+
         var count = 0;
         foreach (Match match in AcePattern.Matches(dacl))
         {
             var ace = match.Value;
             if (ace.StartsWith("(D;", StringComparison.OrdinalIgnoreCase)
-                && ace.Contains(sid, StringComparison.OrdinalIgnoreCase))
+                && identities.Any(i => ace.Contains(i, StringComparison.OrdinalIgnoreCase)))
             {
                 count++;
             }
