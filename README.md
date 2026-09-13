@@ -155,17 +155,10 @@ dist\FocusGuard.exe --remove-legacy-deny
    状态文件"写临时文件再替换"在方向上正确，但没有证明真实断电下的数据完整性。
 7. **未实测 WPF 窗口交互**：manifest 要求提权，非交互环境会卡在 UAC 弹窗上。请你双击跑一次。
 8. 权限验证的边界：测试比较的是 **DACL**（`icacls` 输出 + `icacls /save` 导出），**不含所有者、组与 SACL**。
-9. **运行时 .NET 7 已结束支持。** 本机只有 SDK 7.0.410，所以目前构建 `net7.0-windows`。
-   本机已装 WindowsDesktop 运行时 8.0.8 和 10.0.11，装上 .NET 10 SDK（LTS）后把三个 csproj 的 TFM
-   改成 `net10.0` / `net10.0-windows` 即可迁移 —— 代码里没有任何版本相关的 API。
-
----
-
-## 验收与升级
-
-剩余三件事（WPF 手动验收、真实断电验证、.NET 迁移）的逐项步骤见
-**[docs/验收与升级作业单.md](docs/验收与升级作业单.md)** —— 含可照着点的验收脚本、
-"人为制造故障"的可靠手法，以及出问题时的取证命令。
+9. **运行时 .NET 7 已结束支持**（官方 EOL：2024-05-14，以微软支持策略页核实为准）。
+   目标框架为 `net7.0` / `net7.0-windows`；本机已装 WindowsDesktop 运行时 7.0.20 / 8.0.8 / 10.0.11。
+   注意 .NET 8 / 9 也将于 **2026-11-10** 结束支持，因此迁移目标应为 **.NET 10 LTS**（支持到 2028-11-14）。
+   "代码里没有版本相关 API"只覆盖编译期风险，不覆盖 WPF 渲染/DPI 差异与目标机器运行时依赖。
 
 ---
 
@@ -174,7 +167,7 @@ dist\FocusGuard.exe --remove-legacy-deny
 应用图标由 `src\FocusGuard.App\Resources\app.ico` 提供（8 个尺寸：16/20/24/32/48/64/128/256），
 通过 csproj 的 `<ApplicationIcon>` 嵌入 exe 的 Win32 资源，并通过 XAML 的 `Window.Icon` 用于标题栏。
 圆角外区域做了透明处理（遮罩半径 20%，略小于素材实际的 22%，避免漏出白边）。
-预览见 `docs\icon-preview.png`；原始素材在 `Resources\icon-source.png`（不参与编译）。
+原始素材在 `Resources\icon-source.png`（不参与编译）。
 
 ---
 
@@ -183,8 +176,6 @@ dist\FocusGuard.exe --remove-legacy-deny
 ```
 FocusGuard/
 ├── FocusGuard.sln
-├── docs/设计方案.md                 设计说明、四轮评审修复记录与实测依据
-├── docs/验收与升级作业单.md         手动验收脚本 / 断电验证方案 / .NET 迁移步骤
 ├── src/FocusGuard.Core/             业务逻辑（net7.0，无 WPF 依赖，全部可测）
 │   ├── HostsFile.cs                 字节级区块增删（纯函数）
 │   ├── HostsBlocker.cs              hosts 读写 + 保留 DACL 的原子替换 + 校验过的备份
