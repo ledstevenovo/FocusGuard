@@ -37,6 +37,20 @@ void AssertBytesEqual(byte[] expected, byte[] actual, string message)
         throw new Exception($"{message}（期望 {expected.Length} 字节，实际 {actual.Length} 字节）");
 }
 
+void AssertThrows<T>(Action action, string message) where T : Exception
+{
+    try { action(); }
+    catch (Exception ex)
+    {
+        if (ex is T) return;
+        throw new Exception($"{message}（抛出的是 {ex.GetType().Name} 而非 {typeof(T).Name}）");
+    }
+    throw new Exception(message + "（没有抛出异常）");
+}
+
+// --ci：跳过依赖本机环境（真实 hosts / 真实 fm.exe）的 H 组检查，供 CI 流水线使用
+bool ciMode = args.Contains("--ci");
+
 int CountOccurrences(string text, string needle)
 {
     var count = 0;
@@ -836,25 +850,32 @@ Check("G3 只有显式要求时才移除旧规则", () =>
 });
 
 Console.WriteLine();
-Console.WriteLine("== H. 本机环境只读检查 ==");
-
-Check("H1 真实 hosts 当前不含 FocusGuard 区块（未被污染）", () =>
+if (ciMode)
 {
-    var blocker = new HostsBlocker();
-    AssertTrue(File.Exists(blocker.HostsPath), "找不到真实 hosts 文件：" + blocker.HostsPath);
-    AssertTrue(!blocker.IsActive(), "真实 hosts 里存在残留区块，需要清理");
-    Console.WriteLine("        " + blocker.HostsPath);
-});
-
-Check("H2 真实 fm.exe 存在且未被改名，也没有旧版权限残留", () =>
+    Console.WriteLine("== H. 本机环境只读检查（CI 模式跳过） ==");
+}
+else
 {
-    var config = new FocusConfig();
-    var locker = new TargetLocker(config.TargetExe);
-    AssertEqual(LockState.Unlocked, locker.State, "真实目标不是正常状态：" + locker.State);
-    var legacy = LegacyAclCheck.Inspect(new[] { config.TargetExe });
-    AssertEqual(0, legacy.Count, "真实 fm.exe 上存在旧版拒绝规则，需要手工处理");
-    Console.WriteLine("        " + config.TargetExe);
-});
+    Console.WriteLine("== H. 本机环境只读检查 ==");
+
+    Check("H1 真实 hosts 当前不含 FocusGuard 区块（未被污染）", () =>
+    {
+        var blocker = new HostsBlocker();
+        AssertTrue(File.Exists(blocker.HostsPath), "找不到真实 hosts 文件：" + blocker.HostsPath);
+        AssertTrue(!blocker.IsActive(), "真实 hosts 里存在残留区块，需要清理");
+        Console.WriteLine("        " + blocker.HostsPath);
+    });
+
+    Check("H2 真实 fm.exe 存在且未被改名，也没有旧版权限残留", () =>
+    {
+        var config = new FocusConfig();
+        var locker = new TargetLocker(config.TargetExe);
+        AssertEqual(LockState.Unlocked, locker.State, "真实目标不是正常状态：" + locker.State);
+        var legacy = LegacyAclCheck.Inspect(new[] { config.TargetExe });
+        AssertEqual(0, legacy.Count, "真实 fm.exe 上存在旧版拒绝规则，需要手工处理");
+        Console.WriteLine("        " + config.TargetExe);
+    });
+}
 
 Console.WriteLine();
 Console.WriteLine("== I. 恢复线索的可靠性（本次修复重点） ==");
@@ -1182,6 +1203,113 @@ Check("K3 放弃记录时落盘失败必须报告失败并还原内存记录", (
         AssertTrue(!controller.DiscardUnlocatedRecord("测试"), "落盘失败却报告放弃成功");
         AssertTrue(controller.Inspect().Any(l => l.Contains(locked)), "内存里的记录被清掉了");
         AssertTrue(controller.UnlocatedRecord is not null, "内存里的未定位记录丢失了");
+    }
+    finally { Nuke(dir); }
+});
+
+Console.WriteLine();
+Console.WriteLine("== M. 提权命令解析与虚假恢复记录（第六轮评审修复） ==");
+
+Check("M1 裸命令名固定解析到系统目录的绝对路径", () =>
+{
+    var resolved = CommandRunner.Resolve("icacls");
+    var sysDir = Environment.SystemDirectory;
+    AssertTrue(Path.IsPathRooted(resolved), "解析结果不是绝对路径：" + resolved);
+    AssertTrue(string.Equals(Path.GetDirectoryName(resolved), sysDir, StringComparison.OrdinalIgnoreCase),
+        "解析结果不在系统目录：" + resolved);
+    AssertTrue(File.Exists(resolved), "解析到的工具不存在：" + resolved);
+});
+
+Check("M2 未知裸命令直接失败，不落回 PATH / 当前目录搜索（fail-closed）", () =>
+{
+    var cwd = Environment.CurrentDirectory;
+    var probe = NewTempDir("hijack-probe");
+    try
+    {
+        // 在当前目录放一个同名诱饵：如果解析落回 PATH/当前目录搜索，它就会被执行或被选中
+        var decoy = Path.Combine(probe, "fg-no-such-tool-xyz.exe");
+        File.WriteAllText(decoy, "decoy");
+        Environment.CurrentDirectory = probe;
+        try
+        {
+            AssertThrows<InvalidOperationException>(() => CommandRunner.Run("fg-no-such-tool-xyz"),
+                "未知工具没有抛异常，说明落回了 PATH 搜索");
+        }
+        finally { Environment.CurrentDirectory = cwd; }
+    }
+    finally { Nuke(probe); }
+});
+
+Check("M3 只封网站（LockTargetExe=false）+ 目标不存在：不产生虚假恢复记录，第二次开始不受阻", () =>
+{
+    var dir = NewTempDir("hosts-only-phantom");
+    try
+    {
+        var (config, hostsPath, target) = SetupCycle(dir);
+        config.LockTargetExe = false;
+        File.Delete(target);   // 评审复现条件：目标文件不存在
+
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+        var start1 = controller.Start();
+        AssertTrue(start1.Success, "第一次开始失败：" + start1.FailureText);
+        AssertTrue(start1.Steps.Any(s => s.Name == "阻止 FM 启动" && s.Status == StepStatus.Skipped),
+            "关闭文件锁定时应有跳过步骤");
+
+        var stop1 = controller.Stop();
+        AssertTrue(stop1.Success, "第一次结束失败：" + stop1.FailureText);
+        AssertTrue(!stop1.Warnings.Any(),
+            "产生了虚假的未定位警告：" + string.Join("；", stop1.Warnings.Select(w => w.Detail)));
+        AssertTrue(controller.UnlocatedRecord is null, "留下了指向从未被锁定文件的恢复记录");
+        AssertTrue(controller.UnresolvedItems.Count == 0, "存在未恢复项");
+
+        var start2 = controller.Start();
+        AssertTrue(start2.Success, "第二次开始被上一次的虚假记录阻塞：" + start2.FailureText);
+    }
+    finally { Nuke(dir); }
+});
+
+Check("M4 只封网站 + 目标存在：目标文件完全不被触碰", () =>
+{
+    var dir = NewTempDir("hosts-only-keep");
+    try
+    {
+        var (config, hostsPath, target) = SetupCycle(dir);
+        config.LockTargetExe = false;
+        var before = File.ReadAllBytes(target);
+
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+        AssertTrue(controller.Start().Success, "开始失败");
+        AssertBytesEqual(before, File.ReadAllBytes(target), "只封网站时目标文件被改动了");
+        AssertTrue(!File.Exists(target + TargetLocker.LockedSuffix), "目标文件被改名了");
+
+        AssertTrue(controller.Stop().Success, "结束失败");
+        AssertBytesEqual(before, File.ReadAllBytes(target), "结束时目标文件被改动了");
+        AssertTrue(controller.UnlocatedRecord is null, "留下了恢复记录");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("M5 开启文件锁定但目标不存在：明确跳过且不留恢复记录", () =>
+{
+    var dir = NewTempDir("lock-missing");
+    try
+    {
+        var (config, hostsPath, target) = SetupCycle(dir);
+        config.LockTargetExe = true;
+        File.Delete(target);
+
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+        var start = controller.Start();
+        AssertTrue(start.Success, "目标不存在时开始却失败：" + start.FailureText);
+        AssertTrue(start.Steps.Any(s => s.Name == "阻止 FM 启动" && s.Status == StepStatus.Skipped),
+            "没有报告跳过");
+        AssertTrue(controller.UnlocatedRecord is null, "留下了指向从未被锁定文件的恢复记录");
+
+        var stop = controller.Stop();
+        AssertTrue(stop.Success && !stop.Warnings.Any(),
+            "结束时出现未定位警告：" + string.Join("；", stop.Warnings.Select(w => w.Detail)));
+        var start2 = controller.Start();
+        AssertTrue(start2.Success, "第二次开始被阻塞：" + start2.FailureText);
     }
     finally { Nuke(dir); }
 });

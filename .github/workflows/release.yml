@@ -25,6 +25,9 @@ jobs:
       - name: Build solution (same as local flow)
         run: dotnet build FocusGuard.sln -c Release
 
+      - name: Run tests (CI mode, skips machine-specific H group)
+        run: dotnet run --project tests/FocusGuard.Tests/FocusGuard.Tests.csproj -c Release --no-build -- --ci
+
       - name: Publish self-contained build
         shell: pwsh
         run: >

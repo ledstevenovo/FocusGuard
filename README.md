@@ -155,10 +155,10 @@ dist\FocusGuard.exe --remove-legacy-deny
    状态文件"写临时文件再替换"在方向上正确，但没有证明真实断电下的数据完整性。
 7. **未实测 WPF 窗口交互**：manifest 要求提权，非交互环境会卡在 UAC 弹窗上。请你双击跑一次。
 8. 权限验证的边界：测试比较的是 **DACL**（`icacls` 输出 + `icacls /save` 导出），**不含所有者、组与 SACL**。
-9. **运行时 .NET 7 已结束支持**（官方 EOL：2024-05-14，以微软支持策略页核实为准）。
-   目标框架为 `net7.0` / `net7.0-windows`；本机已装 WindowsDesktop 运行时 7.0.20 / 8.0.8 / 10.0.11。
-   注意 .NET 8 / 9 也将于 **2026-11-10** 结束支持，因此迁移目标应为 **.NET 10 LTS**（支持到 2028-11-14）。
-   "代码里没有版本相关 API"只覆盖编译期风险，不覆盖 WPF 渲染/DPI 差异与目标机器运行时依赖。
+9. **已迁移到 .NET 10 LTS**（2026-09-14）：SDK 10.0.401（`global.json` 钉住），目标框架
+   `net10.0` / `net10.0-windows`，运行时依赖 `Microsoft.WindowsDesktop.App` 10.x。
+   分发到其他机器需要先装 .NET 10 Desktop Runtime；发布形态保持框架依赖，未改自包含。
+   迁移依据与过程见 docs/dotnet10-迁移分析与方案.md；WPF 手动验收仍待执行。
 
 ---
 
@@ -187,10 +187,10 @@ FocusGuard/
 │   ├── FocusController.cs           开始/结束/按目录恢复 + 串行锁 + 失败语义 + 记录线索保护
 │   ├── OperationResult.cs           步骤级结果，保证失败能被如实上报
 │   └── FocusConfig.cs / FocusState.cs / AdminCheck.cs / AppPaths.cs
-├── src/FocusGuard.App/              WPF 界面（net7.0-windows，requireAdministrator，单实例）
+├── src/FocusGuard.App/              WPF 界面（net10.0-windows，requireAdministrator，单实例）
 │   ├── Resources/app.ico            应用图标（16/20/24/32/48/64/128/256 八帧，圆角透明）
 │   └── Resources/icon-source.png    图标原始素材（不参与编译，仅留档）
-└── tests/FocusGuard.Tests/          49 项测试，无第三方依赖
+└── tests/FocusGuard.Tests/          54 项测试，无第三方依赖
 ```
 
 ## 测试
@@ -199,7 +199,7 @@ FocusGuard/
 dotnet run --project tests/FocusGuard.Tests -c Release
 ```
 
-49 项全部跑在临时目录上，包含真实验证而非假设：
+54 项全部跑在临时目录上，包含真实验证而非假设：
 
 - **状态写不下时开始必须中止**，且 hosts 与文件都没被动过
 - **记录中的目标找不到时报警并保留线索**，路径完全一致地恢复后才清空

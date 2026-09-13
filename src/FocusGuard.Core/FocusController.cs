@@ -164,8 +164,13 @@ public sealed class FocusController
             var savedUnresolved = _state.UnresolvedItems;
 
             _state.Phase = FocusPhases.Locking;
-            _state.RecordedTargetPath = _config.TargetExe;
-            _state.RecordedLockedPath = plannedLockedPath;
+            if (_config.LockTargetExe)
+            {
+                // 只有真的要动文件时才记录锁定意图。只封网站时也记录它，
+                // 会留下指向"从未被锁定文件"的虚假恢复记录，结束后阻塞下一次开始。
+                _state.RecordedTargetPath = _config.TargetExe;
+                _state.RecordedLockedPath = plannedLockedPath;
+            }
             _state.RecordedHostsPath = _hosts.HostsPath;
             _state.UnresolvedItems = new List<string>();
 
@@ -201,7 +206,7 @@ public sealed class FocusController
 
             // 3) 目标文件改名
             var renamedHere = false;
-            var lockedPath = plannedLockedPath;
+            var lockedPath = _config.LockTargetExe ? plannedLockedPath : null;
             if (!_config.LockTargetExe)
             {
                 steps.Add(new StepOutcome("阻止 FM 启动", StepStatus.Skipped, "配置里已关闭"));
@@ -225,6 +230,15 @@ public sealed class FocusController
 
                         case LockState.Missing:
                             lockedPath = null;
+                            // 目标不存在、本次什么都没做，因此不需要恢复线索：立即清掉并落盘，
+                            // 避免留下指向"从未被锁定文件"的记录，被当成未定位线索阻塞下次开始。
+                            _state.RecordedTargetPath = null;
+                            _state.RecordedLockedPath = null;
+                            if (!PersistState())
+                            {
+                                steps.Add(new StepOutcome("阻止 FM 启动", StepStatus.Warning,
+                                    "清理锁定记录时状态文件写入失败；记录仍指向从未被锁定的文件，可用 --discard-record 清除"));
+                            }
                             steps.Add(new StepOutcome("阻止 FM 启动", StepStatus.Skipped,
                                 "目标不存在：" + _config.TargetExe));
                             break;
