@@ -177,7 +177,7 @@ dist\FocusGuard.exe --remove-legacy-deny
 FocusGuard/
 ├── FocusGuard.sln
 ├── .github/workflows/release.yml   推送 v* 标签 → 自动构建并发布 Release
-├── src/FocusGuard.Core/             业务逻辑（net7.0，无 WPF 依赖，全部可测）
+├── src/FocusGuard.Core/             业务逻辑（net10.0，无 WPF 依赖，全部可测）
 │   ├── HostsFile.cs                 字节级区块增删（纯函数）
 │   ├── HostsBlocker.cs              hosts 读写 + 保留 DACL 的原子替换 + 校验过的备份
 │   ├── TargetLocker.cs              改名拦截：固定后缀、不通配、冲突即拒绝
