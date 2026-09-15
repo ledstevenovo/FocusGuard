@@ -39,10 +39,16 @@
                         Click="CloseButton_Click">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border Background="Transparent">
+                            <Border x:Name="Bd" Background="Transparent">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
                                                   TextElement.Foreground="{TemplateBinding Foreground}" />
                             </Border>
+                            <!-- 自定义模板会整体替换默认模板，禁用态不会自动变灰，必须自己给 -->
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Button.Template>
                 </Button>
@@ -60,10 +66,15 @@
                         Click="MinimizeButton_Click">
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
-                            <Border Background="Transparent">
+                            <Border x:Name="Bd" Background="Transparent">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
                                                   TextElement.Foreground="{TemplateBinding Foreground}" />
                             </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Button.Template>
                 </Button>
