@@ -53,11 +53,13 @@
                     </Button.Template>
                 </Button>
 
+                <!-- 最小化键画一条横线，而不是用字体里的字形：微软雅黑没有 ✕(U+2715)，
+                     ✕ 是靠回退到 Segoe UI Symbol 显示的（13px 下墨迹 10x9）；
+                     而雅黑自带的 −(U+2212) 只有 8x1，笔画细一半，看着明显小一圈。
+                     字体里没有能匹配 ✕ 的横线字形（U+2014 有 15 宽、太宽），所以直接画。 -->
                 <Button x:Name="MinimizeButton"
                         DockPanel.Dock="Right"
-                        Content="−"
                         Width="26" Height="26"
-                        FontSize="13"
                         Foreground="#B4B2A9"
                         Background="Transparent"
                         BorderThickness="0"
@@ -67,8 +69,9 @@
                     <Button.Template>
                         <ControlTemplate TargetType="Button">
                             <Border x:Name="Bd" Background="Transparent">
-                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                  TextElement.Foreground="{TemplateBinding Foreground}" />
+                                <Border Width="10" Height="2"
+                                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                                        Background="{TemplateBinding Foreground}" />
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsEnabled" Value="False">
