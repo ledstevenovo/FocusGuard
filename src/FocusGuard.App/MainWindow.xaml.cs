@@ -155,6 +155,8 @@ public partial class MainWindow : Window
         _pendingNotice = null;
         ActionButton.IsEnabled = false;
         CloseButton.IsEnabled = false;
+        // 期间会弹以本窗口为 owner 的 MessageBox，而 owner 最小化时弹窗可能被压在后面看不到
+        MinimizeButton.IsEnabled = false;
         ActionButton.Content = text;
     }
 
@@ -163,6 +165,7 @@ public partial class MainWindow : Window
         _busy = false;
         ActionButton.IsEnabled = true;
         CloseButton.IsEnabled = true;
+        MinimizeButton.IsEnabled = true;
         ApplyVisualState();
     }
 
@@ -308,6 +311,12 @@ public partial class MainWindow : Window
     }
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
+
+    /// <summary>
+    /// 最小化到任务栏。不影响任何强制手段（hosts / 改名 / 结束进程都在窗口之外生效），
+    /// 因此专注中照常可用；操作进行中会被禁用，理由见 BeginBusy。
+    /// </summary>
+    private void MinimizeButton_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
 
     private static Brush Hex(string hex) => (Brush)new BrushConverter().ConvertFromString(hex)!;
 }

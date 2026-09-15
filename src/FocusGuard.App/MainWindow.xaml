@@ -47,6 +47,27 @@
                     </Button.Template>
                 </Button>
 
+                <Button x:Name="MinimizeButton"
+                        DockPanel.Dock="Right"
+                        Content="−"
+                        Width="26" Height="26"
+                        FontSize="13"
+                        Foreground="#B4B2A9"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        FocusVisualStyle="{x:Null}"
+                        Click="MinimizeButton_Click">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border Background="Transparent">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  TextElement.Foreground="{TemplateBinding Foreground}" />
+                            </Border>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
                 <TextBlock x:Name="TitleText"
                            Text="FocusGuard"
                            FontSize="12"
