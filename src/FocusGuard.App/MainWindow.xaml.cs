@@ -345,7 +345,11 @@ public partial class MainWindow : Window
     /// <summary>busy 时拦下任务栏 / 系统菜单发来的 SC_MINIMIZE，与 BeginBusy 禁用最小化键同一规则。</summary>
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (WindowCommandPolicy.ShouldSwallowMinimize(msg, wParam.ToInt32(), _busy))
+        // 钩子收到的是所有消息：非 WM_SYSCOMMAND 消息的 wParam 可能是 64 位指针值，
+        // 必须用截断转换——ToInt32() 会抛 OverflowException（实测弹过错）。
+        // 命令值只在 WM_SYSCOMMAND 下有意义且必在 int 范围内，截断不影响判定；
+        // 其余消息被策略函数按 msg 短路丢弃。
+        if (WindowCommandPolicy.ShouldSwallowMinimize(msg, unchecked((int)wParam), _busy))
         {
             handled = true;
         }
