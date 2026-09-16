@@ -1337,6 +1337,35 @@ Check("M6 RID-500 账户的 deny ACE 用 LA 别名表示，检测必须命中（
 });
 
 Console.WriteLine();
+Console.WriteLine("== L. 任务栏最小化的 busy 拦截决策 ==");
+const int wmSysCommand = WindowCommandPolicy.WmSysCommand;
+const int scMinimize = WindowCommandPolicy.ScMinimize;
+
+Check("L1 busy 时拦下 SC_MINIMIZE，含带低 4 位内部标志的形态（核心）", () =>
+{
+    AssertTrue(WindowCommandPolicy.ShouldSwallowMinimize(wmSysCommand, scMinimize, busy: true),
+        "干净的 SC_MINIMIZE 未拦截");
+    AssertTrue(WindowCommandPolicy.ShouldSwallowMinimize(wmSysCommand, scMinimize | 0x2, busy: true),
+        "带内部标志位的 SC_MINIMIZE 未拦截（须按 0xFFF0 掩码比较）");
+});
+
+Check("L2 busy 时绝不误伤还原 / 关闭等其他命令（核心）", () =>
+{
+    AssertTrue(!WindowCommandPolicy.ShouldSwallowMinimize(wmSysCommand, 0xF120 /*SC_RESTORE*/, busy: true),
+        "把 SC_RESTORE 也拦了，最小化后将无法从任务栏还原");
+    AssertTrue(!WindowCommandPolicy.ShouldSwallowMinimize(wmSysCommand, 0xF060 /*SC_CLOSE*/, busy: true),
+        "把 SC_CLOSE 也拦了");
+});
+
+Check("L3 非 busy 时 SC_MINIMIZE 照常放行（任务栏点击最小化正是本次要的能力）", () =>
+{
+    AssertTrue(!WindowCommandPolicy.ShouldSwallowMinimize(wmSysCommand, scMinimize, busy: false),
+        "非 busy 却拦截了");
+    AssertTrue(!WindowCommandPolicy.ShouldSwallowMinimize(0x0010 /*WM_CLOSE*/, scMinimize, busy: true),
+        "把其他消息也拦了");
+});
+
+Console.WriteLine();
 Console.WriteLine($"====  通过 {passed} 项，失败 {failures.Count} 项  ====");
 if (failures.Count > 0)
 {

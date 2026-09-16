@@ -1,6 +1,8 @@
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using FocusGuard.Core;
@@ -37,6 +39,7 @@ public partial class MainWindow : Window
 
         Loaded += OnLoaded;
         Closing += OnClosing;
+        SourceInitialized += OnSourceInitialized;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -317,6 +320,38 @@ public partial class MainWindow : Window
     /// 因此专注中照常可用；操作进行中会被禁用，理由见 BeginBusy。
     /// </summary>
     private void MinimizeButton_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    // —— 任务栏点击最小化 ——
+    // 无边框窗口（WindowStyle=None + NoResize）没有 WS_MINIMIZEBOX，外壳会把本窗口
+    // 当成“不可最小化”（与对话框同款判定），点击任务栏按钮只剩激活、不发 SC_MINIMIZE。
+    // 补上该样式后，任务栏点击经 SC_MINIMIZE 由 WPF 转成 WindowState.Minimized，
+    // 与上面的最小化键汇合在同一条原生命令路径。
+    private const int GwlStyle = -16;
+    private const int WsMinimizeBox = 0x00020000;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+    private void OnSourceInitialized(object? sender, EventArgs e)
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        SetWindowLong(hwnd, GwlStyle, GetWindowLong(hwnd, GwlStyle) | WsMinimizeBox);
+        HwndSource.FromHwnd(hwnd)?.AddHook(WndProc);
+    }
+
+    /// <summary>busy 时拦下任务栏 / 系统菜单发来的 SC_MINIMIZE，与 BeginBusy 禁用最小化键同一规则。</summary>
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (WindowCommandPolicy.ShouldSwallowMinimize(msg, wParam.ToInt32(), _busy))
+        {
+            handled = true;
+        }
+
+        return IntPtr.Zero;
+    }
 
     private static Brush Hex(string hex) => (Brush)new BrushConverter().ConvertFromString(hex)!;
 }
