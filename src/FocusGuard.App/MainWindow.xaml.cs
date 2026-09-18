@@ -194,18 +194,29 @@ public partial class MainWindow : Window
 
     private void OnTick()
     {
-        UpdateElapsed();
-
-        // 底部状态每秒跟着真实探测刷新：游戏更新重新生成 fm.exe 后能立刻看到冲突
+        // busy 检查必须放在最前面：UpdateElapsed 会经由 IsLockedNow 读 hosts，
+        // 若操作进行中还去读，就会和 Apply/Clear 的 File.Replace 撞车
+        // （替换要以"写+删除"方式打开 hosts，而这里的读只共享了"读"）。
         if (_busy)
         {
             return;
         }
 
-        var text = BuildHintText();
-        if (!string.Equals(HintText.Text, text, StringComparison.Ordinal))
+        // 状态探测属于"锦上添花"，绝不推高成崩溃：hosts 被其他程序瞬时占用时跳过本秒
+        try
         {
-            HintText.Text = text;
+            UpdateElapsed();
+
+            // 底部状态每秒跟着真实探测刷新：游戏更新重新生成 fm.exe 后能立刻看到冲突
+            var text = BuildHintText();
+            if (!string.Equals(HintText.Text, text, StringComparison.Ordinal))
+            {
+                HintText.Text = text;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppPaths.Log("状态探测失败（本秒跳过）：" + ex.Message);
         }
     }
 

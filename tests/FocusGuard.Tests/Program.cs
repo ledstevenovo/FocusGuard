@@ -434,6 +434,37 @@ Check("D4 写入失败时明确报错，不静默继续、也不留临时文件"
     finally { Nuke(dir); }
 });
 
+Check("D5 hosts 被不共享删除的进程占用时：替换退避后就地写入成功，ACL 与创建时间不变", () =>
+{
+    var dir = NewTempDir("share-conflict");
+    try
+    {
+        var path = Path.Combine(dir, "hosts");
+        var pristine = HostsBytes(PristineHosts);
+        File.WriteAllBytes(path, pristine);
+
+        var aclBefore = AclFull(path);
+        var daclBefore = AclReader.ReadDacl(path);
+        var createdBefore = File.GetCreationTimeUtc(path);
+
+        // 复现 2026-09-18 的线上失败形态：占用方允许别人读/写，但不共享删除 ——
+        // File.Replace 需要以"写+删除"打开目标，必然共享冲突；
+        // 期望退避重试耗尽后就地写入兜底成功（该类占用挡得住替换、挡不住就地表写）。
+        using (var holder = new FileStream(path, FileMode.Open, FileAccess.Read,
+                   FileShare.Read | FileShare.Write, 4096))
+        {
+            var blocker = new HostsBlocker(path);
+            blocker.Apply(new[] { "zhihu.com" });
+        }
+
+        AssertTrue(HostsFile.ContainsBlock(File.ReadAllBytes(path)), "占用期间 Apply 后 hosts 没有写入区块");
+        AssertEqual(aclBefore, AclFull(path), "就地写入改变了 hosts 的 ACL");
+        AssertEqual(daclBefore, AclReader.ReadDacl(path), "就地写入改变了 hosts 的 DACL");
+        AssertEqual(createdBefore, File.GetCreationTimeUtc(path), "就地写入改变了创建时间（文件被重建了）");
+    }
+    finally { Nuke(dir); }
+});
+
 Console.WriteLine();
 Console.WriteLine("== E. 开始 / 结束的完整流程与失败语义 ==");
 
