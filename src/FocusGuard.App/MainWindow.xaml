@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="FocusGuard"
         Icon="Resources/app.ico"
-        Width="400" Height="300"
+        Width="400" Height="600"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
@@ -125,6 +125,30 @@
                            Foreground="#9CA3AF"
                            Margin="0,16,0,0"
                            HorizontalAlignment="Center" />
+
+                <!-- 随手记：专注期间想到的事。纯内存 UI，代码里从不读写它的 Text，
+                     因此关掉 App 文本自然消失；最小化/还原、锁定/解除都不影响。 -->
+                <TextBlock x:Name="NotepadCaption"
+                           Text="随手记 · 仅内存 · 关闭即清空"
+                           FontSize="11"
+                           Margin="0,18,0,4"
+                           HorizontalAlignment="Center" />
+
+                <TextBox x:Name="NotepadBox"
+                         Width="350" Height="300"
+                         Margin="0,4,0,0"
+                         HorizontalAlignment="Center"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Disabled"
+                         FontSize="13"
+                         Foreground="#374151"
+                         CaretBrush="#374151"
+                         Background="#FFFFFF"
+                         BorderBrush="#E5E7EB"
+                         BorderThickness="1"
+                         Padding="10,8" />
             </StackPanel>
 
             <TextBlock x:Name="HintText"

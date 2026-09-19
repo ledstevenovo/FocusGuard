@@ -248,6 +248,9 @@ public partial class MainWindow : Window
         ElapsedText.Foreground = locked ? AccentText : MutedText;
         ElapsedText.Visibility = _controller.Config.ShowElapsed ? Visibility.Visible : Visibility.Collapsed;
 
+        // 说明行与 ElapsedText 同一套配色惯例；文本框本身保持固定浅色纸面，不随状态变
+        NotepadCaption.Foreground = locked ? AccentText : MutedText;
+
         HintText.Foreground = locked ? AccentText : Hex("#B4B2A9");
         HintText.Text = BuildHintText();
 
