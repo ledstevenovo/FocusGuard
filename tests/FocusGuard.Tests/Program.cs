@@ -182,6 +182,43 @@ Check("A8 域名规范化：去重 / 转小写 / 剔除非法项 / 稳定排序"
     AssertEqual("zhihu.com", normalized[1], "去重失败");
 });
 
+Check("A9 只有 BEGIN 没有 END 的残留：RemoveBlock 剥掉残留，并保住后面的用户内容", () =>
+{
+    const string text = "127.0.0.1 localhost\r\n" +
+                        HostsFile.BeginMarker + "\r\n" +
+                        HostsFile.NoteLine + "\r\n" +
+                        "0.0.0.0 zhihu.com\r\n" +
+                        "::1 zhihu.com\r\n" +
+                        "# user-added comment\r\n" +
+                        "1.2.3.4 my-own-entry.com\r\n";
+    const string expected = "127.0.0.1 localhost\r\n" +
+                            "# user-added comment\r\n" +
+                            "1.2.3.4 my-own-entry.com\r\n";
+
+    var cleaned = HostsFile.RemoveBlock(HostsBytes(text));
+    AssertEqual(expected, Encoding.ASCII.GetString(cleaned), "残留未剥净，或误伤了用户自己的内容");
+});
+
+Check("A10 两个 BEGIN 一个 END 的历史畸形：一次 RemoveBlock 整段清干净", () =>
+{
+    var block = Encoding.ASCII.GetString(HostsFile.BuildBlock(new[] { "zhihu.com" }));
+    var partial = HostsFile.BeginMarker + "\r\n0.0.0.0 hupu.com\r\n";
+    var restored = HostsFile.RemoveBlock(HostsBytes("A-line\r\n" + partial + block + "B-line\r\n"));
+    AssertEqual("A-line\r\nB-line\r\n", Encoding.ASCII.GetString(restored), "畸形区块未被整段清除");
+});
+
+Check("A11 残留状态下 AddBlock：不再叠加成两个 BEGIN，结果只有一个完整区块", () =>
+{
+    var residue = HostsBytes("127.0.0.1 localhost\r\n" + HostsFile.BeginMarker + "\r\n0.0.0.0 old.example\r\n");
+    var updated = HostsFile.AddBlock(residue, new[] { "zhihu.com" });
+    var text = Encoding.ASCII.GetString(updated);
+
+    AssertEqual(1, CountOccurrences(text, HostsFile.BeginMarker), "出现了多个 BEGIN 标记");
+    AssertEqual(1, CountOccurrences(text, HostsFile.EndMarker), "出现了多个 END 标记");
+    AssertTrue(!text.Contains("old.example"), "残留的屏蔽规则仍在");
+    AssertTrue(text.Contains("0.0.0.0 zhihu.com"), "新规则未写入");
+});
+
 Console.WriteLine();
 Console.WriteLine("== B. hosts 文件读写往返 ==");
 
@@ -206,6 +243,48 @@ Check("B1 Apply → IsActive → Clear 后与原始文件字节一致", () =>
         blocker.Clear();
         AssertTrue(!blocker.IsActive(), "Clear 之后区块仍存在");
         AssertBytesEqual(original, File.ReadAllBytes(path), "还原后与原始内容不一致");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("B2 hosts 里只有 BEGIN 残留时：IsActive 如实报告，Clear 能真正清掉（核心）", () =>
+{
+    var dir = NewTempDir("hosts-residue");
+    try
+    {
+        var path = Path.Combine(dir, "hosts");
+        File.WriteAllBytes(path, HostsBytes(PristineHosts +
+            HostsFile.BeginMarker + "\r\n0.0.0.0 zhihu.com\r\n::1 zhihu.com\r\n"));
+
+        var blocker = new HostsBlocker(path);
+        AssertTrue(blocker.IsActive(), "残留的规则仍在生效，IsActive 却报告未激活");
+
+        blocker.Clear();
+        AssertBytesEqual(HostsBytes(PristineHosts), File.ReadAllBytes(path), "残留未被清除");
+        AssertTrue(!blocker.IsActive(), "清除后仍报告激活");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("B3 残留状态下 Apply：先备份残留态，再修成一个完整区块", () =>
+{
+    var dir = NewTempDir("hosts-repair");
+    try
+    {
+        var path = Path.Combine(dir, "hosts");
+        File.WriteAllBytes(path, HostsBytes(PristineHosts +
+            HostsFile.BeginMarker + "\r\n0.0.0.0 old.example\r\n"));
+
+        var blocker = new HostsBlocker(path, () => new DateTime(2026, 9, 20, 16, 30, 0));
+        blocker.Apply(new[] { "zhihu.com" });
+
+        var text = File.ReadAllText(path);
+        AssertEqual(1, CountOccurrences(text, HostsFile.BeginMarker), "修复后仍有多余 BEGIN");
+        AssertEqual(1, CountOccurrences(text, HostsFile.EndMarker), "修复后仍有多余 END");
+        AssertTrue(!text.Contains("old.example"), "残留的屏蔽规则仍在");
+        AssertTrue(text.Contains("0.0.0.0 zhihu.com"), "新规则未写入");
+        AssertEqual(1, blocker.ListBackups().Count, "修复前未留下备份");
+        AssertTrue(blocker.IsActive(), "修复后应处于激活态");
     }
     finally { Nuke(dir); }
 });

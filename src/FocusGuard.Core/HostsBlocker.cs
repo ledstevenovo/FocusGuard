@@ -27,7 +27,12 @@ public sealed class HostsBlocker
     private static readonly int[] ReadRetryDelaysMs = { 150, 400, 800 };
     private static readonly int[] WriteRetryDelaysMs = { 120, 250, 500, 1000 };
 
-    public bool IsActive() => File.Exists(HostsPath) && HostsFile.ContainsBlock(ReadAllBytesWithRetry(HostsPath));
+    /// <summary>
+    /// hosts 里存在任何我们的内容（完整区块，或"只有 BEGIN 没有 END"的残留）。
+    /// 残留里的规则行仍在真实生效，所以残留必须算"激活"——否则界面会报告
+    /// "未写入 hosts"，解除流程也会跳过清理，与实际状态背离。
+    /// </summary>
+    public bool IsActive() => File.Exists(HostsPath) && HostsFile.HasAnyMarker(ReadAllBytesWithRetry(HostsPath));
 
     public void Apply(IEnumerable<string> domains)
     {

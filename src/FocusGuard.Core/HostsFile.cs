@@ -15,11 +15,22 @@ public static class HostsFile
 
     private static readonly byte[] BeginBytes = Encoding.ASCII.GetBytes(BeginMarker);
     private static readonly byte[] EndBytes = Encoding.ASCII.GetBytes(EndMarker);
+    private static readonly byte[] NoteBytes = Encoding.ASCII.GetBytes(NoteLine);
+    private static readonly byte[] Ipv4PrefixBytes = Encoding.ASCII.GetBytes("0.0.0.0 ");
+    private static readonly byte[] Ipv6PrefixBytes = Encoding.ASCII.GetBytes("::1 ");
     private const byte Lf = (byte)'\n';
+    private const byte Cr = (byte)'\r';
 
     public static bool ContainsBlock(byte[] content) => FindBlock(content) is not null;
 
-    /// <summary>清掉已有区块后重新追加，因此重复调用是幂等的。</summary>
+    /// <summary>是否存在任何 BEGIN 标记 —— 完整区块或"只有 BEGIN 的残留"都算。</summary>
+    public static bool HasAnyMarker(byte[] content) => IndexOf(content, BeginBytes, 0) >= 0;
+
+    /// <summary>
+    /// 清掉已有区块后重新追加，因此重复调用是幂等的。
+    /// "只有 BEGIN 没有 END"的残留（外部编辑削除 END 行、写入中途崩溃等造成）
+    /// 会先被 <see cref="RemoveBlock"/> 剥离再追加，不会叠加成两个 BEGIN 的畸形。
+    /// </summary>
     public static byte[] AddBlock(byte[] content, IEnumerable<string> domains)
     {
         var head = RemoveBlock(content);
@@ -33,19 +44,31 @@ public static class HostsFile
         return Concat(head, BuildBlock(domains));
     }
 
+    /// <summary>
+    /// 删除完整区块；对"只有 BEGIN 没有 END"的残留也同样剥离 ——
+    /// 残留里的 0.0.0.0 规则行虽然不构成完整区块，却仍在真实生效，不能装作看不见。
+    /// </summary>
     public static byte[] RemoveBlock(byte[] content)
     {
-        var hit = FindBlock(content);
-        if (hit is null)
+        // 极端情况下完整区块与残留可能同时存在多段，循环清到干净为止（上限兜底防死循环）
+        for (var guard = 0; guard < 8; guard++)
         {
-            return content;
-        }
+            var hit = FindBlock(content);
+            if (hit is not null)
+            {
+                content = RemoveRange(content, hit.Value.Start, hit.Value.End);
+                continue;
+            }
 
-        var (start, end) = hit.Value;
-        var result = new byte[content.Length - (end - start)];
-        Array.Copy(content, 0, result, 0, start);
-        Array.Copy(content, end, result, start, content.Length - end);
-        return result;
+            var residue = FindResidue(content);
+            if (residue is null)
+            {
+                return content;
+            }
+
+            content = RemoveRange(content, residue.Value.Start, residue.Value.End);
+        }
+        return content;
     }
 
     /// <summary>
@@ -103,6 +126,109 @@ public static class HostsFile
         }
 
         return (StartOfLine(content, begin), end);
+    }
+
+    /// <summary>
+    /// 定位"只有 BEGIN 没有 END"的残留：从 BEGIN 所在行首起，连续吞掉我们写得出的行
+    /// （NOTE 行、0.0.0.0 / ::1 规则行、游离的 END 行），遇到任何不认得的行就停 ——
+    /// 用户自己的内容一个字节都不碰（例如残留之后又被追加进去的注释或规则）。
+    /// </summary>
+    private static (int Start, int End)? FindResidue(byte[] content)
+    {
+        var begin = IndexOf(content, BeginBytes, 0);
+        if (begin < 0)
+        {
+            return null;
+        }
+
+        var start = StartOfLine(content, begin);
+        var end = -1;
+        var pos = start;
+
+        while (pos < content.Length)
+        {
+            var lf = pos;
+            while (lf < content.Length && content[lf] != Lf)
+            {
+                lf++;
+            }
+
+            var lineEnd = lf < content.Length ? lf + 1 : lf;   // 行尾（含换行符）
+            var textLen = lf - pos;                            // 行内容长度（不含 \n）
+            if (textLen > 0 && content[pos + textLen - 1] == Cr)
+            {
+                textLen--;
+            }
+
+            if (end < 0)
+            {
+                end = lineEnd;      // 首行就是 BEGIN 所在行，必然属于我们
+            }
+            else if (ContainsAt(content, pos, textLen, EndBytes))
+            {
+                end = lineEnd;      // 游离的 END 行：一并清掉再收手
+                break;
+            }
+            else if (StartsWithAt(content, pos, textLen, Ipv4PrefixBytes)
+                     || StartsWithAt(content, pos, textLen, Ipv6PrefixBytes)
+                     || EqualsAt(content, pos, textLen, NoteBytes))
+            {
+                end = lineEnd;
+            }
+            else
+            {
+                break;
+            }
+
+            pos = lineEnd;
+        }
+
+        return (start, end);
+    }
+
+    private static byte[] RemoveRange(byte[] content, int start, int end)
+    {
+        var result = new byte[content.Length - (end - start)];
+        Array.Copy(content, 0, result, 0, start);
+        Array.Copy(content, end, result, start, content.Length - end);
+        return result;
+    }
+
+    private static bool StartsWithAt(byte[] haystack, int offset, int length, byte[] prefix) =>
+        length >= prefix.Length && EqualsAt(haystack, offset, prefix.Length, prefix);
+
+    private static bool EqualsAt(byte[] haystack, int offset, int length, byte[] value)
+    {
+        if (length != value.Length)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (haystack[offset + i] != value[i])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static bool ContainsAt(byte[] haystack, int offset, int length, byte[] needle)
+    {
+        for (var i = offset; i <= offset + length - needle.Length; i++)
+        {
+            var j = 0;
+            while (j < needle.Length && haystack[i + j] == needle[j])
+            {
+                j++;
+            }
+            if (j == needle.Length)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int StartOfLine(byte[] content, int index)
