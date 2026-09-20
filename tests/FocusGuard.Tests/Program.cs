@@ -465,6 +465,30 @@ Check("D5 hosts 被不共享删除的进程占用时：替换退避后就地写�
     finally { Nuke(dir); }
 });
 
+Check("D6 备份轮转：只保留最新一份，旧备份被清理", () =>
+{
+    var dir = NewTempDir("backup-rotate");
+    try
+    {
+        var path = Path.Combine(dir, "hosts");
+        var pristine = HostsBytes(PristineHosts);
+        File.WriteAllBytes(path, pristine);
+
+        // 预置两份"上一次"留下的旧备份
+        File.WriteAllBytes(Path.Combine(dir, "hosts.focusguard-20000101-000000.bak"), HostsBytes("stale-1\r\n"));
+        File.WriteAllBytes(Path.Combine(dir, "hosts.focusguard-20000102-000000.bak"), HostsBytes("stale-2\r\n"));
+
+        var blocker = new HostsBlocker(path, () => new DateTime(2026, 9, 20, 16, 0, 0));
+        blocker.Apply(new[] { "zhihu.com" });
+
+        var backups = blocker.ListBackups();
+        AssertEqual(1, backups.Count, "轮转后应只剩 1 份备份");
+        AssertTrue(backups[0].Contains("20260920-160000"), "保留的不是最新备份：" + backups[0]);
+        AssertBytesEqual(pristine, File.ReadAllBytes(backups[0]), "备份内容不是原始 hosts");
+    }
+    finally { Nuke(dir); }
+});
+
 Console.WriteLine();
 Console.WriteLine("== E. 开始 / 结束的完整流程与失败语义 ==");
 

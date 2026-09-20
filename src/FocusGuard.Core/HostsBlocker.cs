@@ -46,6 +46,7 @@ public sealed class HostsBlocker
 
         // 只备份"还没被我们改过"的原始状态：
         // 这样备份永远是可用的原始副本，不会被我们自己写入的区块污染，也不会过期。
+        // 备份只保留最新一份（见 PruneOldBackups），不会在 etc 目录里堆积。
         if (!HostsFile.ContainsBlock(original))
         {
             CreateVerifiedBackup(original);
@@ -88,6 +89,34 @@ public sealed class HostsBlocker
         if (!readBack.AsSpan().SequenceEqual(pristine))
         {
             throw new IOException("hosts 备份回读校验失败，已中止本次操作：" + backupPath);
+        }
+
+        PruneOldBackups(backupPath);
+    }
+
+    /// <summary>
+    /// 只保留最新一份备份。每次专注开始都会走到这里备份一次，不清理就会在
+    /// System32\drivers\etc 里无限堆积（该系统目录被安全软件重点监控）。
+    /// 先写新备份并校验通过再删旧的，因此任何时刻都至少有一份可用备份。
+    /// 删除失败只记日志，不影响本次操作。
+    /// </summary>
+    private void PruneOldBackups(string keepPath)
+    {
+        foreach (var old in ListBackups())
+        {
+            if (string.Equals(old, keepPath, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Delete(old);
+            }
+            catch (Exception ex)
+            {
+                AppPaths.Log("清理旧 hosts 备份失败：" + old + "（" + ex.Message + "）");
+            }
         }
     }
 
