@@ -25,6 +25,9 @@ public partial class MainWindow : Window
     /// <summary>从点击处理一开始就置位，覆盖"结束进程 → 锁定/解除"的整段过程。</summary>
     private bool _busy;
 
+    /// <summary>权限不足启动即退出时置位，让 OnClosing 跳过解除确认直接放行。</summary>
+    private bool _forceClose;
+
     private string? _pendingNotice;
 
     public MainWindow()
@@ -49,6 +52,13 @@ public partial class MainWindow : Window
             MessageBox.Show(this,
                 "FocusGuard 需要管理员权限才能修改 hosts 文件。\r\n请关闭后以管理员身份重新运行。",
                 "权限不足", MessageBoxButton.OK, MessageBoxImage.Warning);
+
+            // 与 manifest 的 requireAdministrator 语义一致：没权限就不让继续，
+            // 而不是留着窗口让用户点完一堆注定失败的操作。
+            // _forceClose 跳过 OnClosing 的解除确认——没有权限，Stop 注定失败，问也是白问。
+            _forceClose = true;
+            Application.Current.Shutdown();
+            return;
         }
 
         if (_controller.NeedsAttention)
@@ -291,6 +301,12 @@ public partial class MainWindow : Window
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
+        // 权限不足启动即退出时不走解除确认（没权限，Stop 注定失败）
+        if (_forceClose)
+        {
+            return;
+        }
+
         // 正在锁定 / 解除（含结束进程阶段）时不允许关闭，否则流程会交错留下部分限制
         if (_busy)
         {

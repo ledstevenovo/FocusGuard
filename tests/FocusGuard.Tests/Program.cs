@@ -1523,6 +1523,33 @@ Check("N3 首尾空白先去掉再判断后缀", () =>
 });
 
 Console.WriteLine();
+Console.WriteLine("== O. CommandRunner 双流并发读取与超时（F4/N2 修复） ==");
+
+Check("O1 子进程同时向 stdout/stderr 各写 16KB 不卡死（双流必须并发读取）", () =>
+{
+    // 单条命令行参数形式交给 cmd 解析；每路约 2000 行 ≈ 16KB，远超 4KB 管道缓冲区。
+    // 旧的"先 ReadToEnd stdout 再读 stderr"写法在这种输出下会双向互等死锁。
+    var result = CommandRunner.Run("cmd", 15000,
+        "/c", "for /l %i in (1,1,2000) do (echo out%i&echo err%i 1>&2)");
+
+    AssertTrue(result.Ok, "并发洪峰输出下命令应正常结束，退出码 " + result.ExitCode);
+    AssertTrue(result.StdOut.Contains("out2000"), "stdout 输出不完整");
+    AssertTrue(result.StdErr.Contains("err2000"), "stderr 输出不完整");
+});
+
+Check("O2 超时不挂死：到时杀进程树，退出码 -1 按失败处理", () =>
+{
+    // ping -n 10 约 9 秒才结束，2 秒超时应把它杀掉
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var result = CommandRunner.Run("ping", 2000, "-n", "10", "127.0.0.1");
+    sw.Stop();
+
+    AssertTrue(!result.Ok, "被超时杀掉的命令不得报告成功");
+    AssertEqual(-1, result.ExitCode, "超时退出的退出码应为 -1");
+    AssertTrue(sw.Elapsed < TimeSpan.FromSeconds(10), "超时机制没有生效（耗时 " + sw.Elapsed + ")");
+});
+
+Console.WriteLine();
 Console.WriteLine($"====  通过 {passed} 项，失败 {failures.Count} 项  ====");
 if (failures.Count > 0)
 {
