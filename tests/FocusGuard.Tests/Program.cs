@@ -1500,6 +1500,29 @@ Check("L3 非 busy 时 SC_MINIMIZE 照常放行（任务栏点击最小化正是
 });
 
 Console.WriteLine();
+Console.WriteLine("== N. ProcessGuard 进程名规范化（F3 修复） ==");
+
+Check("N1 带 .exe 后缀的配置名剥掉后缀（大小写不限），否则静默匹配不到任何进程", () =>
+{
+    AssertEqual("fm", ProcessGuard.NormalizeName("fm.exe"), "fm.exe 应剥掉后缀");
+    AssertEqual("Fm", ProcessGuard.NormalizeName("Fm.EXE"), ".EXE 大小写应忽略");
+    AssertEqual("Berkelium", ProcessGuard.NormalizeName("Berkelium.exe"), "Berkelium.exe 应剥掉后缀");
+});
+
+Check("N2 不含 .exe 的名字原样保留：不剥其他点号、不改动大小写", () =>
+{
+    AssertEqual("fm", ProcessGuard.NormalizeName("fm"), "fm 应原样");
+    AssertEqual("my.tool", ProcessGuard.NormalizeName("my.tool"), "非 .exe 的点号不应被剥");
+    AssertEqual("Berkelium", ProcessGuard.NormalizeName("Berkelium"), "Berkelium 应原样");
+});
+
+Check("N3 首尾空白先去掉再判断后缀", () =>
+{
+    AssertEqual("fm", ProcessGuard.NormalizeName("  fm.exe  "), "首尾空白应去掉");
+    AssertEqual("fm", ProcessGuard.NormalizeName("\tfm\n"), "制表符/换行也应去掉");
+});
+
+Console.WriteLine();
 Console.WriteLine($"====  通过 {passed} 项，失败 {failures.Count} 项  ====");
 if (failures.Count > 0)
 {

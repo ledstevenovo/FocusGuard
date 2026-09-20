@@ -8,6 +8,19 @@ namespace FocusGuard.Core;
 /// </summary>
 public static class ProcessGuard
 {
+    /// <summary>
+    /// <see cref="Process.GetProcessesByName"/> 要的是"不含扩展名的可执行名"：
+    /// 配置里写了 "fm.exe" 会静默匹配不到任何进程（实测返回空数组），检测与结束双双失效。
+    /// 因此统一剥掉 .exe 后缀（大小写不限）；只剥 .exe，其他点号（如 my.tool）保持原样。
+    /// </summary>
+    public static string NormalizeName(string name)
+    {
+        var trimmed = name.Trim();
+        return trimmed.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? trimmed[..^4]
+            : trimmed;
+    }
+
     public static IReadOnlyList<string> FindRunning(IEnumerable<string> processNames)
     {
         var found = new List<string>();
@@ -21,7 +34,7 @@ public static class ProcessGuard
             Process[] processes;
             try
             {
-                processes = Process.GetProcessesByName(name.Trim());
+                processes = Process.GetProcessesByName(NormalizeName(name));
             }
             catch
             {
@@ -46,10 +59,15 @@ public static class ProcessGuard
         return found;
     }
 
-    /// <summary>返回成功结束的进程数。任何一个进程失败都不抛异常。</summary>
-    public static int KillAll(IEnumerable<string> processNames)
+    /// <summary>
+    /// 返回结束结果：<b>只有确认退出的才计入 ConfirmedKilled</b>；3 秒内未确认退出的
+    /// 进程进 <see cref="ProcessKillResult.NotConfirmed"/> 如实上报，绝不谎报成功。
+    /// 任何一个进程失败都不抛异常。
+    /// </summary>
+    public static ProcessKillResult KillAll(IEnumerable<string> processNames)
     {
         var killed = 0;
+        var notConfirmed = new List<string>();
         foreach (var name in processNames)
         {
             if (string.IsNullOrWhiteSpace(name))
@@ -60,7 +78,7 @@ public static class ProcessGuard
             Process[] processes;
             try
             {
-                processes = Process.GetProcessesByName(name.Trim());
+                processes = Process.GetProcessesByName(NormalizeName(name));
             }
             catch
             {
@@ -72,8 +90,15 @@ public static class ProcessGuard
                 try
                 {
                     process.Kill(entireProcessTree: true);
-                    process.WaitForExit(3000);
-                    killed++;
+                    if (process.WaitForExit(3000))
+                    {
+                        killed++;
+                    }
+                    else
+                    {
+                        // 超时不等于失败，但也绝不能当成成功：上报给调用方如实提示
+                        notConfirmed.Add(NormalizeName(name) + "（PID " + process.Id + "，超时未确认退出）");
+                    }
                 }
                 catch
                 {
@@ -85,6 +110,9 @@ public static class ProcessGuard
                 }
             }
         }
-        return killed;
+        return new ProcessKillResult(killed, notConfirmed);
     }
 }
+
+/// <summary>一次批量结束进程的结果。NotConfirmed 非空 = 有进程没能确认退出，调用方必须如实提示。</summary>
+public sealed record ProcessKillResult(int ConfirmedKilled, IReadOnlyList<string> NotConfirmed);

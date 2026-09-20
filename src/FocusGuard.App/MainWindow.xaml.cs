@@ -124,7 +124,7 @@ public partial class MainWindow : Window
                 ActionButton.Content = "等待确认…";
                 var answer = MessageBox.Show(this,
                     "检测到以下程序正在运行：\r\n\r\n    " + string.Join("、", running) +
-                    "\r\n\r\n开始专注需要先结束它们，是否继续？",
+                    "\r\n\r\n开始专注需要先结束它们（会连带结束其全部子进程），是否继续？",
                     "FocusGuard", MessageBoxButton.YesNo, MessageBoxImage.Question);
 
                 if (answer != MessageBoxResult.Yes)
@@ -133,7 +133,16 @@ public partial class MainWindow : Window
                 }
 
                 ActionButton.Content = "正在结束进程…";
-                await Task.Run(() => _controller.KillBlockedProcesses());
+                var kill = await Task.Run(() => _controller.KillBlockedProcesses());
+                if (kill.NotConfirmed.Count > 0)
+                {
+                    // 没杀干净的绝不能静默过去：屏蔽规则照常被施加，但已运行的实例不受影响
+                    MessageBox.Show(this,
+                        "以下进程在限定时间内未能确认结束，它们可能仍在运行：\r\n\r\n    " +
+                        string.Join("、", kill.NotConfirmed) +
+                        "\r\n\r\n屏蔽规则仍会正常施加；这些已运行的实例可在任务管理器里手工结束。",
+                        "FocusGuard", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
             }
 
             ActionButton.Content = "正在锁定…";

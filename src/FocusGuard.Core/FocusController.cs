@@ -88,7 +88,15 @@ public sealed class FocusController
 
     public IReadOnlyList<string> RunningBlockedProcesses() => ProcessGuard.FindRunning(_config.BlockedProcessNames);
 
-    public int KillBlockedProcesses() => ProcessGuard.KillAll(_config.BlockedProcessNames);
+    /// <summary>结束正在运行的被屏蔽进程。结果如实上报：未确认退出的进 NotConfirmed，不谎报成功。</summary>
+    public ProcessKillResult KillBlockedProcesses()
+    {
+        var result = ProcessGuard.KillAll(_config.BlockedProcessNames);
+        Say(result.NotConfirmed.Count == 0
+            ? $"结束进程：确认结束 {result.ConfirmedKilled} 个"
+            : $"结束进程：确认结束 {result.ConfirmedKilled} 个，{result.NotConfirmed.Count} 个未能确认退出：{string.Join("、", result.NotConfirmed)}");
+        return result;
+    }
 
     /// <summary>精确候选路径：state 记录 → 当前配置 → 用户补充的恢复目录下的同名文件。不做通配。</summary>
     public IEnumerable<string> CandidateTargetPaths()
