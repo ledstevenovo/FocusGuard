@@ -219,6 +219,26 @@ Check("A11 残留状态下 AddBlock：不再叠加成两个 BEGIN，结果只有
     AssertTrue(text.Contains("0.0.0.0 zhihu.com"), "新规则未写入");
 });
 
+Check("A12 非 ASCII 域名转 punycode 写入，不再被 ASCII 编码毁成 ??（F5）", () =>
+{
+    var normalized = HostsFile.Normalize(new[] { "例子.测试" });
+    AssertEqual(1, normalized.Count, "合法 IDN 域名不应被丢弃");
+    AssertEqual("xn--fsqu00a.xn--0zwm56d", normalized[0], "应转成 punycode");
+
+    var block = Encoding.ASCII.GetString(HostsFile.BuildBlock(new[] { "例子.测试" }));
+    AssertTrue(block.Contains("0.0.0.0 xn--fsqu00a.xn--0zwm56d"), "写入的应是 punycode 形式");
+    AssertTrue(!block.Contains('?'), "不应出现被编码器毁坏的条目");
+});
+
+Check("A13 非法 IDN 丢弃，纯 ASCII 条目原样保留（F5）", () =>
+{
+    var normalized = HostsFile.Normalize(new[] { "www.zhihu.com", "例子..测试", "bad..domain." });
+    AssertTrue(normalized.Contains("www.zhihu.com"), "ASCII 域名应原样保留");
+    AssertTrue(normalized.Contains("bad..domain."), "ASCII 条目不做额外校验，行为保持不变");
+    AssertTrue(!normalized.Contains("例子..测试"), "非法 IDN 应被丢弃");
+    AssertTrue(!normalized.Any(d => d.Contains('?')), "不得留下被毁坏的条目");
+});
+
 Console.WriteLine();
 Console.WriteLine("== B. hosts 文件读写往返 ==");
 

@@ -28,6 +28,9 @@ public partial class MainWindow : Window
     /// <summary>权限不足启动即退出时置位，让 OnClosing 跳过解除确认直接放行。</summary>
     private bool _forceClose;
 
+    /// <summary>关闭前的异步解除已完成时置位，让紧随其后的第二次 OnClosing 直接放行。</summary>
+    private bool _closeConfirmed;
+
     private string? _pendingNotice;
 
     public MainWindow()
@@ -299,10 +302,16 @@ public partial class MainWindow : Window
         ElapsedText.Text = $"已专注 {(int)span.TotalHours:00}:{span.Minutes:00}:{span.Seconds:00}";
     }
 
-    private void OnClosing(object? sender, CancelEventArgs e)
+    private async void OnClosing(object? sender, CancelEventArgs e)
     {
         // 权限不足启动即退出时不走解除确认（没权限，Stop 注定失败）
         if (_forceClose)
+        {
+            return;
+        }
+
+        // 异步解除已走完，这次是真正的关闭
+        if (_closeConfirmed)
         {
             return;
         }
@@ -331,16 +340,34 @@ public partial class MainWindow : Window
             return;
         }
 
-        var result = _controller.Stop();
-        if (!result.Success)
+        // 解除要走 hosts 写入（含退避重试，最坏到秒级），同步压在 UI 线程上会让
+        // "正在关闭"的窗口假死。先取消这次关闭、后台解除，完成后再真正 Close()。
+        e.Cancel = true;
+        BeginBusy("正在解除…");
+        try
         {
-            // 没清干净就不退出，把窗口留给用户重试
-            e.Cancel = true;
-            _pendingNotice = "关闭前解除失败，仍未退出";
-            ApplyVisualState();
-            MessageBox.Show(this,
-                "解除失败，为避免留下残留，本次未退出：\r\n\r\n" + result.FailureText,
-                "FocusGuard", MessageBoxButton.OK, MessageBoxImage.Warning);
+            var result = await Task.Run(() => _controller.Stop());
+            if (!result.Success)
+            {
+                // 没清干净就不退出，把窗口留给用户重试
+                _pendingNotice = "关闭前解除失败，仍未退出";
+                EndBusy();
+                MessageBox.Show(this,
+                    "解除失败，为避免留下残留，本次未退出：\r\n\r\n" + result.FailureText,
+                    "FocusGuard", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            EndBusy();
+            _closeConfirmed = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            AppPaths.Log("关闭前解除异常: " + ex.Message);
+            _pendingNotice = "关闭前解除异常，仍未退出";
+            EndBusy();
+            MessageBox.Show(this, ex.Message, "FocusGuard", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 

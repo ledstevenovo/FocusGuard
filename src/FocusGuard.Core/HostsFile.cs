@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace FocusGuard.Core;
@@ -89,15 +90,40 @@ public static class HostsFile
         return Encoding.ASCII.GetBytes(sb.ToString());
     }
 
-    /// <summary>域名规范化：去空白、转小写、丢弃含空格或 # 的非法项、去重、稳定排序。</summary>
+    /// <summary>
+    /// 域名规范化：去空白、转小写、丢弃含空格或 # 的非法项、去重、稳定排序。
+    /// 非 ASCII 域名（如中文 IDN）转 punycode —— 区块最终用 ASCII 编码写出，
+    /// 不转的话会被编码器毁成 "0.0.0.0 ??.??" 这种无效行（F5）；转换失败（非法 IDN）则丢弃。
+    /// 纯 ASCII 条目原样保留，不做额外校验，保持既有行为不变。
+    /// </summary>
     public static IReadOnlyList<string> Normalize(IEnumerable<string> domains)
     {
         return domains
             .Select(d => (d ?? string.Empty).Trim().ToLowerInvariant())
             .Where(d => d.Length > 0 && !d.Contains(' ') && !d.Contains('\t') && !d.Contains('#'))
+            .Select(ToAsciiDomain)
+            .Where(d => d.Length > 0)
             .Distinct(StringComparer.Ordinal)
             .OrderBy(d => d, StringComparer.Ordinal)
             .ToList();
+    }
+
+    /// <summary>把 IDN 域名转成 hosts 能写的 ASCII 形式；本就是 ASCII 的原样返回；非法 IDN 返回空串（由调用方丢弃）。</summary>
+    private static string ToAsciiDomain(string domain)
+    {
+        if (domain.All(c => c <= 0x7F))
+        {
+            return domain;
+        }
+
+        try
+        {
+            return new IdnMapping().GetAscii(domain);
+        }
+        catch (ArgumentException)
+        {
+            return string.Empty;
+        }
     }
 
     /// <summary>返回区块的 [起始索引, 结束索引)。区间包含末尾换行，且起始位置对齐到行首。</summary>
