@@ -568,6 +568,58 @@ Check("D6 备份轮转：只保留最新一份，旧备份被清理", () =>
     finally { Nuke(dir); }
 });
 
+Check("D7 就地写入兜底（Apply 路径）：宿主被'共享读写但不共享删除'的进程占用时仍能写入，且写前留备份", () =>
+{
+    var dir = NewTempDir("fallback-apply");
+    try
+    {
+        var path = Path.Combine(dir, "hosts");
+        var pristine = HostsBytes(PristineHosts);
+        File.WriteAllBytes(path, pristine);
+
+        // 模拟内容监视类软件：占着 hosts 只共享"读 + 写"，不共享"删除"。
+        // File.Replace 需要删除权限必然失败 → 只能走就地写入兜底。
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Write))
+        {
+            var blocker = new HostsBlocker(path, () => new DateTime(2026, 9, 20, 17, 0, 0));
+            blocker.Apply(new[] { "zhihu.com" });
+
+            AssertTrue(blocker.IsActive(), "兜底写入后 hosts 应含区块");
+
+            var backups = blocker.ListBackups();
+            AssertEqual(1, backups.Count, "非原子的就地写入之前必须留下可用备份");
+            AssertBytesEqual(pristine, File.ReadAllBytes(backups[0]), "备份应是写入前的原始内容");
+        }
+    }
+    finally { Nuke(dir); }
+});
+
+Check("D8 就地写入兜底（Clear 路径）：先备份含区块的当前内容再清除，不出现'无备份的截断窗口'", () =>
+{
+    var dir = NewTempDir("fallback-clear");
+    try
+    {
+        var path = Path.Combine(dir, "hosts");
+        File.WriteAllBytes(path, HostsBytes(PristineHosts));
+
+        var blocker = new HostsBlocker(path, () => new DateTime(2026, 9, 20, 17, 1, 0));
+        blocker.Apply(new[] { "zhihu.com" });
+        var withBlock = File.ReadAllBytes(path);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Write))
+        {
+            blocker.Clear();
+        }
+
+        AssertTrue(!HostsFile.HasAnyMarker(File.ReadAllBytes(path)), "区块应已被清除");
+
+        var backups = blocker.ListBackups();
+        AssertEqual(1, backups.Count, "清除路径的就地写入之前也必须留下备份");
+        AssertBytesEqual(withBlock, File.ReadAllBytes(backups[0]), "备份应是清除前的当前内容（含区块）");
+    }
+    finally { Nuke(dir); }
+});
+
 Console.WriteLine();
 Console.WriteLine("== E. 开始 / 结束的完整流程与失败语义 ==");
 
