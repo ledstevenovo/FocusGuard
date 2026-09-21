@@ -1542,6 +1542,15 @@ Check("M6 RID-500 账户的 deny ACE 用 LA 别名表示，检测必须命中（
         "CurrentUserSid 应返回合法 SID，实际：" + (me ?? "null"));
 });
 
+Check("M7 SID 前缀相同不得误判：RID-500 不得命中 RID-5001 的拒绝规则（N3 修复）", () =>
+{
+    var dacl = "D:AI(D;;RX;;;S-1-5-21-1-2-3-5001)(A;;FA;;;BA)";
+    AssertEqual(0, LegacyAclCheck.CountDenyAcesForSid(dacl, "S-1-5-21-1-2-3-500"),
+        "RID-500 被 RID-5001 的 ACE 子串误匹配了");
+    AssertEqual(1, LegacyAclCheck.CountDenyAcesForSid(dacl, "S-1-5-21-1-2-3-5001"),
+        "RID-5001 自身的 deny 应照常命中");
+});
+
 Console.WriteLine();
 Console.WriteLine("== L. 任务栏最小化的 busy 拦截决策 ==");
 const int wmSysCommand = WindowCommandPolicy.WmSysCommand;

@@ -79,8 +79,14 @@ public static class LegacyAclCheck
         foreach (Match match in AcePattern.Matches(dacl))
         {
             var ace = match.Value;
-            if (ace.StartsWith("(D;", StringComparison.OrdinalIgnoreCase)
-                && identities.Any(i => ace.Contains(i, StringComparison.OrdinalIgnoreCase)))
+            if (!ace.StartsWith("(D;", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // ACE 的 trustee 固定在结尾 ";;;SID)" —— 用尾锚定精确匹配。
+            // 子串匹配会把 RID-500 误命中到 RID-5001 这类"前缀相同"的账户上（N3）。
+            if (identities.Any(i => ace.EndsWith(";" + i + ")", StringComparison.OrdinalIgnoreCase)))
             {
                 count++;
             }
