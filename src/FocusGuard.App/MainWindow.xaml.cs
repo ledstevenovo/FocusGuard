@@ -31,6 +31,9 @@ public partial class MainWindow : Window
     /// <summary>关闭前的异步解除已完成时置位，让紧随其后的第二次 OnClosing 直接放行。</summary>
     private bool _closeConfirmed;
 
+    /// <summary>窗口的 HwndSource，用于 OnClosed 时摘掉 WndProc 钩子。</summary>
+    private HwndSource? _hwndSource;
+
     private string? _pendingNotice;
 
     public MainWindow()
@@ -45,6 +48,7 @@ public partial class MainWindow : Window
 
         Loaded += OnLoaded;
         Closing += OnClosing;
+        Closed += OnClosed;
         SourceInitialized += OnSourceInitialized;
     }
 
@@ -163,7 +167,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AppPaths.Log("操作异常: " + ex);
+            // 只记类型 + Message：完整堆栈会把实现细节和本机路径写进日志（S1）
+            AppPaths.Log("操作异常: " + AppPaths.Describe(ex));
             _pendingNotice = ex.Message;
             MessageBox.Show(this, ex.Message, "FocusGuard 操作失败",
                 MessageBoxButton.OK, MessageBoxImage.Error);
@@ -405,7 +410,16 @@ public partial class MainWindow : Window
     {
         var hwnd = new WindowInteropHelper(this).Handle;
         SetWindowLong(hwnd, GwlStyle, GetWindowLong(hwnd, GwlStyle) | WsMinimizeBox);
-        HwndSource.FromHwnd(hwnd)?.AddHook(WndProc);
+        _hwndSource = HwndSource.FromHwnd(hwnd);
+        _hwndSource?.AddHook(WndProc);
+    }
+
+    /// <summary>窗口关闭后释放：停掉每秒 Tick 的定时器、摘掉消息钩子（M2/M3）。</summary>
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        _timer.Stop();
+        _hwndSource?.RemoveHook(WndProc);
+        _hwndSource = null;
     }
 
     /// <summary>busy 时拦下任务栏 / 系统菜单发来的 SC_MINIMIZE，与 BeginBusy 禁用最小化键同一规则。</summary>

@@ -4,7 +4,8 @@ namespace FocusGuard.Core;
 
 /// <summary>
 /// 只做「开始专注时把已在运行的目标进程关掉」这一件事。
-/// 不做常驻监控 —— 因为 fm.exe 的 Deny ACE 已经保证它启动不了。
+/// 不做常驻监控 —— 因为 fm.exe 已被改名为 fm.exe.focusguard-locked
+/// （<see cref="TargetLocker"/>），Windows 不允许运行不存在的程序。
 /// </summary>
 public static class ProcessGuard
 {

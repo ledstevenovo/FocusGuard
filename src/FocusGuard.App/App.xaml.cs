@@ -57,7 +57,8 @@ public partial class App : Application
 
         DispatcherUnhandledException += (_, args) =>
         {
-            AppPaths.Log("未处理异常: " + args.Exception);
+            // 只记类型 + Message：完整堆栈会把实现细节和本机路径写进日志（S1）
+            AppPaths.Log("未处理异常: " + AppPaths.Describe(args.Exception));
             MessageBox.Show(args.Exception.Message, "FocusGuard 出错",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             args.Handled = true;
@@ -190,6 +191,22 @@ public partial class App : Application
         {
             // 无交互环境（脚本调用）时忽略弹窗，结果已写进日志
         }
+    }
+
+    /// <summary>退出时显式归还单实例互斥体（M5）。OS 本会在进程退出时回收，显式释放让生命周期意图明确。</summary>
+    protected override void OnExit(ExitEventArgs e)
+    {
+        try
+        {
+            _instanceMutex?.ReleaseMutex();
+        }
+        catch
+        {
+            // 未持有（例如 CLI 分支没拿到锁就退出）时 ReleaseMutex 会抛，忽略
+        }
+        _instanceMutex?.Dispose();
+        _instanceMutex = null;
+        base.OnExit(e);
     }
 
     private static bool HasFlag(IEnumerable<string> args, string flag) =>

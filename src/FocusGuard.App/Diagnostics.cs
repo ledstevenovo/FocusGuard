@@ -71,8 +71,15 @@ internal static class Diagnostics
             if (AttachConsole(-1))
             {
                 var writer = new StreamWriter(Console.OpenStandardOutput(), Encoding.UTF8) { AutoFlush = true };
-                Console.SetOut(writer);
-                Console.Write(text);
+                try
+                {
+                    Console.SetOut(writer);
+                    Console.Write(text);
+                }
+                finally
+                {
+                    writer.Dispose();   // 占着的 stdout 句柄在退出前显式归还（M4）
+                }
             }
         }
         catch
