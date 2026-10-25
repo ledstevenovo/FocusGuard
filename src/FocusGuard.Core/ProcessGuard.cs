@@ -22,6 +22,49 @@ public static class ProcessGuard
             : trimmed;
     }
 
+    /// <summary>
+    /// 屏蔽进程的有效名单 = 用户显式名单 + 屏蔽 exe 列表的进程名（总是并入：
+    /// 结束进程是"屏蔽程序"的基础动作，与是否启用文件锁定无关）
+    /// + 目标锁定程序的进程名（<paramref name="lockTargetExe"/> 开启才并入：
+    /// 锁定靠改名，文件被占用时改名必败，不先结束它锁定必失败）。
+    /// 配置里只存用户显式写的名单，这一份在运行时派生，换目标后无需手工同步。
+    /// </summary>
+    public static IReadOnlyList<string> EffectiveBlockedNames(
+        IEnumerable<string> processNames,
+        IEnumerable<string>? blockedExePaths,
+        string? targetExe,
+        bool lockTargetExe)
+    {
+        var names = new List<string>();
+        void Add(string name)
+        {
+            if (name.Length > 0 && !names.Contains(name, StringComparer.OrdinalIgnoreCase))
+            {
+                names.Add(name);
+            }
+        }
+
+        foreach (var raw in processNames)
+        {
+            Add((raw ?? string.Empty).Trim());
+        }
+
+        foreach (var path in blockedExePaths ?? Array.Empty<string>())
+        {
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                Add(NormalizeName(Path.GetFileName(path)));
+            }
+        }
+
+        if (lockTargetExe && !string.IsNullOrWhiteSpace(targetExe))
+        {
+            Add(NormalizeName(Path.GetFileName(targetExe)));
+        }
+
+        return names;
+    }
+
     public static IReadOnlyList<string> FindRunning(IEnumerable<string> processNames)
     {
         var found = new List<string>();

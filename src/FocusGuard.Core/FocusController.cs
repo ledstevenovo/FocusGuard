@@ -43,23 +43,29 @@ public sealed class FocusController
 
     /// <summary>
     /// 记录里存在、但当前<b>无法确认为已恢复</b>的对象（记录线索会保留）。
-    /// 判定依据是记录中那个目标自身的状态：只有它回到 <see cref="LockState.Unlocked"/>
+    /// 判定依据是记录中每个目标自身的状态：只有它回到 <see cref="LockState.Unlocked"/>
     /// （原文件在位、且没有锁定文件）才算解决。
     /// 不能因为"在别处找不到锁定文件"就认定无法定位 —— <b>那恰恰是"已恢复"的正常结果</b>。
     /// </summary>
     public string? UnlocatedRecord =>
-        string.IsNullOrWhiteSpace(_state.RecordedLockedPath) || RecordedTargetResolved()
-            ? null
-            : _state.RecordedLockedPath;
+        RecordedTargetPathsAll().FirstOrDefault(p => new TargetLocker(p).State != LockState.Unlocked);
 
-    /// <summary>记录里的目标是否已确认回到正常状态（原文件在位、且没有锁定文件）。</summary>
-    public bool RecordedTargetResolved()
+    /// <summary>所有记录目标是否都确认回到正常状态（原文件在位、且没有锁定文件）。</summary>
+    public bool RecordedTargetResolved() =>
+        RecordedTargetPathsAll().All(p => new TargetLocker(p).State == LockState.Unlocked);
+
+    /// <summary>恢复线索的全集：新列表字段 + 旧版单目标字段（去重、保序）。</summary>
+    private IReadOnlyList<string> RecordedTargetPathsAll()
     {
-        if (string.IsNullOrWhiteSpace(_state.RecordedTargetPath))
+        var paths = new List<string>(_state.RecordedLockedTargets ?? new List<string>());
+        if (!string.IsNullOrWhiteSpace(_state.RecordedTargetPath))
         {
-            return true;
+            paths.Add(_state.RecordedTargetPath!);
         }
-        return new TargetLocker(_state.RecordedTargetPath!).State == LockState.Unlocked;
+        return paths
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     public string HostsPath => _hosts.HostsPath;
@@ -86,24 +92,42 @@ public sealed class FocusController
 
     public IReadOnlyList<LegacyAclFinding> LegacyAclFindings { get; private set; } = Array.Empty<LegacyAclFinding>();
 
-    public IReadOnlyList<string> RunningBlockedProcesses() => ProcessGuard.FindRunning(_config.BlockedProcessNames);
+    /// <summary>开始前会先检测/结束的进程：显式名单 + 目标锁定进程名自动并入（见 ProcessGuard.EffectiveBlockedNames）。</summary>
+    public IReadOnlyList<string> RunningBlockedProcesses() =>
+        ProcessGuard.FindRunning(EffectiveBlockedProcessNames());
 
     /// <summary>结束正在运行的被屏蔽进程。结果如实上报：未确认退出的进 NotConfirmed，不谎报成功。</summary>
     public ProcessKillResult KillBlockedProcesses()
     {
-        var result = ProcessGuard.KillAll(_config.BlockedProcessNames);
+        var result = ProcessGuard.KillAll(EffectiveBlockedProcessNames());
         Say(result.NotConfirmed.Count == 0
             ? $"结束进程：确认结束 {result.ConfirmedKilled} 个"
             : $"结束进程：确认结束 {result.ConfirmedKilled} 个，{result.NotConfirmed.Count} 个未能确认退出：{string.Join("、", result.NotConfirmed)}");
         return result;
     }
 
-    /// <summary>精确候选路径：state 记录 → 当前配置 → 用户补充的恢复目录下的同名文件。不做通配。</summary>
+    /// <summary>精确候选路径：state 记录（新列表 + 旧单目标）→ 当前配置（exe 列表 + 旧单目标）→ 用户补充的恢复目录下的同名文件。不做通配。</summary>
     public IEnumerable<string> CandidateTargetPaths()
     {
+        foreach (var path in _state.RecordedLockedTargets ?? new List<string>())
+        {
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                yield return path;
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(_state.RecordedTargetPath))
         {
             yield return _state.RecordedTargetPath!;
+        }
+
+        foreach (var path in _config.BlockedExePaths ?? new List<string>())
+        {
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                yield return path;
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(_config.TargetExe))
@@ -111,6 +135,7 @@ public sealed class FocusController
             yield return _config.TargetExe;
         }
 
+        // 恢复目录兜底只按旧单目标的文件名找（新列表一律全路径精确记录，不做这种模糊匹配）
         var fileName = Path.GetFileName(_config.TargetExe);
         if (!string.IsNullOrWhiteSpace(fileName) && _config.RecoveryDirectories is not null)
         {
@@ -133,6 +158,31 @@ public sealed class FocusController
             {
                 yield return new TargetLocker(path);
             }
+        }
+    }
+
+    private IReadOnlyList<string> EffectiveBlockedProcessNames() =>
+        ProcessGuard.EffectiveBlockedNames(
+            _config.BlockedProcessNames, _config.BlockedExePaths, _config.TargetExe, _config.LockTargetExe);
+
+    /// <summary>当前配置要锁定的文件：屏蔽 exe 列表优先；列表为空（旧配置/未使用）时沿用旧版单目标。</summary>
+    private IEnumerable<string> ConfiguredLockTargets()
+    {
+        var paths = _config.BlockedExePaths;
+        if (paths is not null && paths.Count > 0)
+        {
+            foreach (var path in paths
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                yield return path;
+            }
+            yield break;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_config.TargetExe))
+        {
+            yield return _config.TargetExe;
         }
     }
 
@@ -162,23 +212,38 @@ public sealed class FocusController
                 return new OperationResult(false, steps);
             }
 
-            var plannedLockedPath = LockedPathFor(_config.TargetExe);
+            // 锁定意图：目标不存在的记了就会留下指向"从未被锁定文件"的虚假恢复线索，先排除
+            var lockIntents = new List<string>();
+            if (_config.LockTargetExe)
+            {
+                foreach (var path in ConfiguredLockTargets())
+                {
+                    if (new TargetLocker(path).State == LockState.Missing)
+                    {
+                        continue; // 步骤 3 会如实报告"目标不存在"并跳过
+                    }
+                    if (!lockIntents.Contains(path, StringComparer.OrdinalIgnoreCase))
+                    {
+                        lockIntents.Add(path);
+                    }
+                }
+            }
+
+            // 旧单目标字段镜像：列表里含旧目标时保持旧状态文件/诊断的语义，否则以列表为准
+            var legacyTarget = lockIntents.FirstOrDefault(p => SamePath(p, _config.TargetExe));
 
             // 1) 先可靠保存操作意图 —— 存不下来就绝不动手
             var savedPhase = _state.Phase;
             var savedTarget = _state.RecordedTargetPath;
             var savedLocked = _state.RecordedLockedPath;
+            var savedTargets = _state.RecordedLockedTargets;
             var savedHosts = _state.RecordedHostsPath;
             var savedUnresolved = _state.UnresolvedItems;
 
             _state.Phase = FocusPhases.Locking;
-            if (_config.LockTargetExe)
-            {
-                // 只有真的要动文件时才记录锁定意图。只封网站时也记录它，
-                // 会留下指向"从未被锁定文件"的虚假恢复记录，结束后阻塞下一次开始。
-                _state.RecordedTargetPath = _config.TargetExe;
-                _state.RecordedLockedPath = plannedLockedPath;
-            }
+            _state.RecordedLockedTargets = lockIntents;
+            _state.RecordedTargetPath = legacyTarget;
+            _state.RecordedLockedPath = legacyTarget is null ? null : LockedPathFor(legacyTarget);
             _state.RecordedHostsPath = _hosts.HostsPath;
             _state.UnresolvedItems = new List<string>();
 
@@ -188,6 +253,7 @@ public sealed class FocusController
                 _state.Phase = savedPhase;
                 _state.RecordedTargetPath = savedTarget;
                 _state.RecordedLockedPath = savedLocked;
+                _state.RecordedLockedTargets = savedTargets;
                 _state.RecordedHostsPath = savedHosts;
                 _state.UnresolvedItems = savedUnresolved;
 
@@ -198,70 +264,75 @@ public sealed class FocusController
                 return new OperationResult(false, steps);
             }
 
-            // 2) hosts 规则
+            // 2) hosts 规则（一个域名都没配时跳过，不写只有标记头尾的空区块）
             var hostsAppliedHere = false;
-            try
+            var domainCount = HostsFile.Normalize(_config.BlockedDomains).Count;
+            if (domainCount == 0)
             {
-                _hosts.Apply(_config.BlockedDomains);
-                hostsAppliedHere = true;
-                steps.Add(new StepOutcome("写入网站规则", StepStatus.Ok,
-                    $"{HostsFile.Normalize(_config.BlockedDomains).Count} 个域名"));
-            }
-            catch (Exception ex)
-            {
-                steps.Add(new StepOutcome("写入网站规则", StepStatus.Failed, ex.Message));
-            }
-
-            // 3) 目标文件改名
-            var renamedHere = false;
-            var lockedPath = _config.LockTargetExe ? plannedLockedPath : null;
-            if (!_config.LockTargetExe)
-            {
-                steps.Add(new StepOutcome("阻止 FM 启动", StepStatus.Skipped, "配置里已关闭"));
+                steps.Add(new StepOutcome("写入网站规则", StepStatus.Skipped, "未配置屏蔽域名"));
             }
             else
             {
-                var locker = new TargetLocker(_config.TargetExe);
                 try
                 {
-                    switch (locker.State)
-                    {
-                        case LockState.Conflict:
-                            steps.Add(new StepOutcome("阻止 FM 启动", StepStatus.Failed,
-                                "原文件与锁定文件同时存在，已拒绝覆盖。请手工确认：" +
-                                locker.TargetPath + " / " + locker.LockedPath));
-                            break;
-
-                        case LockState.Locked:
-                            steps.Add(new StepOutcome("阻止 FM 启动", StepStatus.Ok, "此前已锁定"));
-                            break;
-
-                        case LockState.Missing:
-                            lockedPath = null;
-                            // 目标不存在、本次什么都没做，因此不需要恢复线索：立即清掉并落盘，
-                            // 避免留下指向"从未被锁定文件"的记录，被当成未定位线索阻塞下次开始。
-                            _state.RecordedTargetPath = null;
-                            _state.RecordedLockedPath = null;
-                            if (!PersistState())
-                            {
-                                steps.Add(new StepOutcome("阻止 FM 启动", StepStatus.Warning,
-                                    "清理锁定记录时状态文件写入失败；记录仍指向从未被锁定的文件，可用 --discard-record 清除"));
-                            }
-                            steps.Add(new StepOutcome("阻止 FM 启动", StepStatus.Skipped,
-                                "目标不存在：" + _config.TargetExe));
-                            break;
-
-                        default:
-                            locker.Lock();
-                            renamedHere = true;
-                            steps.Add(new StepOutcome("阻止 FM 启动", StepStatus.Ok,
-                                Path.GetFileName(locker.LockedPath)));
-                            break;
-                    }
+                    _hosts.Apply(_config.BlockedDomains);
+                    hostsAppliedHere = true;
+                    steps.Add(new StepOutcome("写入网站规则", StepStatus.Ok, $"{domainCount} 个域名"));
                 }
                 catch (Exception ex)
                 {
-                    steps.Add(new StepOutcome("阻止 FM 启动", StepStatus.Failed, ex.Message));
+                    steps.Add(new StepOutcome("写入网站规则", StepStatus.Failed, ex.Message));
+                }
+            }
+
+            // 3) 程序文件锁定（改名防止启动；配置关闭或没选任何程序时跳过）
+            var lockedHere = new List<string>();
+            if (!_config.LockTargetExe)
+            {
+                steps.Add(new StepOutcome("锁定程序文件", StepStatus.Skipped, "配置里已关闭"));
+            }
+            else if (lockIntents.Count == 0 && !ConfiguredLockTargets().Any())
+            {
+                steps.Add(new StepOutcome("锁定程序文件", StepStatus.Skipped, "未选择要锁定的程序"));
+            }
+            else
+            {
+                foreach (var path in ConfiguredLockTargets())
+                {
+                    var locker = new TargetLocker(path);
+                    try
+                    {
+                        switch (locker.State)
+                        {
+                            case LockState.Conflict:
+                                steps.Add(new StepOutcome("锁定程序文件", StepStatus.Failed,
+                                    "原文件与锁定文件同时存在，已拒绝覆盖。请手工确认：" +
+                                    locker.TargetPath + " / " + locker.LockedPath));
+                                break;
+
+                            case LockState.Locked:
+                                steps.Add(new StepOutcome("锁定程序文件", StepStatus.Ok,
+                                    "此前已锁定：" + locker.TargetFileName));
+                                break;
+
+                            case LockState.Missing:
+                                // 意图记录阶段已排除；正常到不了这里，防御性兜底
+                                steps.Add(new StepOutcome("锁定程序文件", StepStatus.Skipped,
+                                    "目标不存在：" + path));
+                                break;
+
+                            default:
+                                locker.Lock();
+                                lockedHere.Add(path);
+                                steps.Add(new StepOutcome("锁定程序文件", StepStatus.Ok,
+                                    locker.TargetFileName));
+                                break;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        steps.Add(new StepOutcome("锁定程序文件", StepStatus.Failed, ex.Message));
+                    }
                 }
             }
 
@@ -270,7 +341,7 @@ public sealed class FocusController
             // 4) 收尾
             if (steps.Any(s => s.Status == StepStatus.Failed))
             {
-                var rollbackFailures = Rollback(hostsAppliedHere, renamedHere ? lockedPath : null);
+                var rollbackFailures = Rollback(hostsAppliedHere, lockedHere);
                 foreach (var failure in rollbackFailures)
                 {
                     steps.Add(new StepOutcome("回滚", StepStatus.Failed, failure));
@@ -290,7 +361,6 @@ public sealed class FocusController
             _state.Phase = FocusPhases.Locked;
             _state.AppliedHostsBlock = HostsBlockActive;
             _state.AppliedTargetLock = TargetLockActive;
-            _state.RecordedLockedPath = lockedPath;
             _state.UnresolvedItems = new List<string>();
             _state.LastOperation = "专注开始";
 
@@ -325,8 +395,9 @@ public sealed class FocusController
                     "状态文件写入失败，本次解除仍会继续"));
             }
 
-            // 1) 目标文件：逐个精确探测后还原（与 hosts 分开判定，互不掩盖）
-            var targetRecorded = _state.AppliedTargetLock || !string.IsNullOrWhiteSpace(_state.RecordedLockedPath);
+            // 1) 程序文件：逐个精确探测后还原（与 hosts 分开判定，互不掩盖）
+            var recordedPaths = RecordedTargetPathsAll();
+            var targetRecorded = _state.AppliedTargetLock || recordedPaths.Count > 0;
             var targetLocated = false;
 
             foreach (var locker in Candidates())
@@ -335,10 +406,10 @@ public sealed class FocusController
                 {
                     targetLocated = true;
                     foundAny = true;
-                    steps.Add(new StepOutcome("恢复 FM 文件", StepStatus.Failed,
+                    steps.Add(new StepOutcome("恢复程序文件", StepStatus.Failed,
                         "原文件与锁定文件同时存在，已保留两份、未做任何覆盖或删除：" +
                         locker.TargetPath + " / " + locker.LockedPath));
-                    unresolved.Add("恢复 FM 文件（文件冲突，需手工确认）");
+                    unresolved.Add("恢复程序文件（文件冲突，需手工确认）：" + locker.TargetFileName);
                     continue;
                 }
 
@@ -352,25 +423,32 @@ public sealed class FocusController
                 try
                 {
                     locker.Unlock();
-                    steps.Add(new StepOutcome("恢复 FM 文件", StepStatus.Ok, locker.TargetFileName));
+                    steps.Add(new StepOutcome("恢复程序文件", StepStatus.Ok, locker.TargetFileName));
                 }
                 catch (Exception ex)
                 {
-                    steps.Add(new StepOutcome("恢复 FM 文件", StepStatus.Failed, ex.Message));
-                    unresolved.Add("恢复 FM 文件：" + locker.TargetFileName);
+                    steps.Add(new StepOutcome("恢复程序文件", StepStatus.Failed, ex.Message));
+                    unresolved.Add("恢复程序文件：" + locker.TargetFileName);
                 }
             }
 
-            // 记录里明明锁过，现在却确认不了 —— 报警并保留线索，不能当没发生
-            if (targetRecorded && !targetLocated && !RecordedTargetResolved())
+            // 逐条核对记录：既没有锁定文件、原文件也不在 —— 报警并保留线索，不能当没发生
+            var anyRecordedMissing = false;
+            foreach (var recorded in recordedPaths)
             {
-                var where = _state.RecordedLockedPath ?? _state.RecordedTargetPath ?? "（路径未知）";
+                if (new TargetLocker(recorded).State != LockState.Missing)
+                {
+                    continue;
+                }
+
+                anyRecordedMissing = true;
+                unlocated.Add(recorded);
                 steps.Add(new StepOutcome("定位残留", StepStatus.Warning,
-                    $"记录显示曾把文件改名为 {where}，但当前找不到它，无法确认是否已恢复；" +
+                    $"记录显示曾锁定 {recorded}，但当前找不到它，无法确认是否已恢复；" +
                     "已保留这条记录线索（未清空）。如知道它被移到哪里，可用 --unlock <目录> 指定目录。"));
-                unlocated.Add(where);
             }
-            else if (targetRecorded && !targetLocated)
+
+            if (targetRecorded && !targetLocated && !anyRecordedMissing)
             {
                 // 锁定文件不在了、原文件又在位 —— 这正是"已恢复"的正常结果，不能报成未找到
                 steps.Add(new StepOutcome("定位残留", StepStatus.Skipped,
@@ -433,9 +511,10 @@ public sealed class FocusController
 
             if (unlocated.Count == 0 && RecordedTargetResolved())
             {
-                // 一切都确认还原了，记录可以安全清空
+                // 一切都确认还原了，记录可以安全清空（新旧字段一起）
                 _state.RecordedTargetPath = null;
                 _state.RecordedLockedPath = null;
+                _state.RecordedLockedTargets = new List<string>();
             }
             // 否则保留记录线索，供 --unlock <目录> 继续定位
 
@@ -462,24 +541,28 @@ public sealed class FocusController
     {
         lock (_gate)
         {
+            var discardedPaths = RecordedTargetPathsAll();
             var discardedLocked = _state.RecordedLockedPath;
             var discardedTarget = _state.RecordedTargetPath;
+            var discardedTargets = _state.RecordedLockedTargets;
             var previousOperation = _state.LastOperation;
 
-            if (discardedLocked is null && discardedTarget is null)
+            if (discardedPaths.Count == 0)
             {
                 return false;
             }
 
             _state.RecordedTargetPath = null;
             _state.RecordedLockedPath = null;
-            _state.LastOperation = "已放弃未能定位的记录：" + (discardedLocked ?? discardedTarget) + "（" + reason + "）";
+            _state.RecordedLockedTargets = new List<string>();
+            _state.LastOperation = "已放弃未能定位的记录：" + string.Join("、", discardedPaths) + "（" + reason + "）";
 
             if (!PersistState())
             {
                 // 落盘失败就还原内存，避免"界面说已放弃、重启后又被同一条记录挡住"
                 _state.RecordedTargetPath = discardedTarget;
                 _state.RecordedLockedPath = discardedLocked;
+                _state.RecordedLockedTargets = discardedTargets;
                 _state.LastOperation = previousOperation;
                 Say("放弃记录失败：状态文件写入失败，记录已保留");
                 return false;
@@ -520,12 +603,12 @@ public sealed class FocusController
                 try
                 {
                     locker.Unlock();
-                    steps.Add(new StepOutcome("恢复 FM 文件", StepStatus.Ok, locker.TargetFileName));
+                    steps.Add(new StepOutcome("恢复程序文件", StepStatus.Ok, locker.TargetFileName));
                 }
                 catch (Exception ex)
                 {
-                    steps.Add(new StepOutcome("恢复 FM 文件", StepStatus.Failed, ex.Message));
-                    unresolved.Add("恢复 FM 文件：" + locker.TargetFileName);
+                    steps.Add(new StepOutcome("恢复程序文件", StepStatus.Failed, ex.Message));
+                    unresolved.Add("恢复程序文件：" + locker.TargetFileName);
                 }
             }
 
@@ -538,12 +621,13 @@ public sealed class FocusController
             {
                 _state.RecordedTargetPath = null;
                 _state.RecordedLockedPath = null;
+                _state.RecordedLockedTargets = new List<string>();
             }
-            else if (unresolved.Count == 0 && _state.RecordedLockedPath is not null)
+            else if (unresolved.Count == 0 && RecordedTargetPathsAll().Count > 0)
             {
-                var recordedName = Path.GetFileName(_state.RecordedLockedPath);
-                var sameName = candidates.Any(p =>
-                    string.Equals(Path.GetFileName(p), recordedName, StringComparison.OrdinalIgnoreCase));
+                var recordedList = RecordedLockedPathsAll();
+                var sameName = candidates.Any(p => recordedList.Any(r =>
+                    string.Equals(Path.GetFileName(p), Path.GetFileName(r), StringComparison.OrdinalIgnoreCase)));
 
                 var reason = sameName
                     ? "它与记录中的目标同名但路径不同 —— 同名不等于同一个文件"
@@ -551,7 +635,7 @@ public sealed class FocusController
 
                 steps.Add(new StepOutcome("定位残留", StepStatus.Warning,
                     "本次在 " + directory + " 恢复了 " + string.Join("、", candidates) +
-                    "；记录中的目标是 " + _state.RecordedLockedPath + "。" +
+                    "；记录中的锁定文件是 " + string.Join("、", recordedList) + "。" +
                     reason + "，因此记录线索已保留。请核对两者是否对应：" +
                     "若确认已恢复，可用 --discard-record 清除该记录；否则请到记录中的路径再处理。"));
             }
@@ -618,28 +702,30 @@ public sealed class FocusController
         };
 
         var lockers = Candidates().ToList();
-        var conflict = lockers.FirstOrDefault(l => l.HasConflict);
-        var locked = lockers.FirstOrDefault(l => l.IsLocked);
+        var conflicts = lockers.Where(l => l.HasConflict).ToList();
+        var lockedOnes = lockers.Where(l => l.IsLocked).ToList();
 
-        if (conflict is not null)
+        if (conflicts.Count > 0)
         {
-            lines.Add("FM 文件：原文件与锁定文件同时存在，需手工确认");
+            lines.Add("程序文件：原文件与锁定文件同时存在，需手工确认（" +
+                      string.Join("、", conflicts.Select(l => l.TargetFileName)) + "）");
         }
-        else if (locked is not null)
+        else if (lockedOnes.Count > 0)
         {
-            lines.Add("FM 文件：已改名为 " + Path.GetFileName(locked.LockedPath));
+            lines.Add($"程序文件：已锁定 {lockedOnes.Count} 个（" +
+                      string.Join("、", lockedOnes.Select(l => l.TargetFileName)) + "）");
         }
         else if (UnlocatedRecord is not null)
         {
-            lines.Add("FM 文件：记录中的锁定文件未找到（" + UnlocatedRecord + "）");
+            lines.Add("程序文件：记录中的锁定文件未找到（" + UnlocatedRecord + "）");
         }
         else if (lockers.Any(l => l.TargetExists))
         {
-            lines.Add("FM 文件：未改名");
+            lines.Add("程序文件：未锁定");
         }
         else
         {
-            lines.Add("FM 文件：原文件不存在，未做改动");
+            lines.Add("程序文件：原文件不存在，未做改动");
         }
 
         foreach (var item in _state.UnresolvedItems)
@@ -669,7 +755,10 @@ public sealed class FocusController
         yield return $"hosts 备份：{(_hosts.ListBackups().Count == 0 ? "无" : string.Join(", ", _hosts.ListBackups().Select(Path.GetFileName)))}";
         yield return $"记录的目标路径：{_state.RecordedTargetPath ?? "无"}";
         yield return $"记录的锁定文件：{_state.RecordedLockedPath ?? "无"}";
-        yield return $"当前目标文件：{_config.TargetExe}（{DescribeState(new TargetLocker(_config.TargetExe).State)}）";
+        yield return $"记录的锁定目标（多）：{(_state.RecordedLockedTargets.Count == 0 ? "无" : string.Join("；", _state.RecordedLockedTargets))}";
+        var exeList = _config.BlockedExePaths;
+        yield return $"屏蔽 exe 列表：{(exeList is null || exeList.Count == 0 ? "无" : string.Join("；", exeList))}";
+        yield return $"旧版单目标文件：{_config.TargetExe}（{DescribeState(new TargetLocker(_config.TargetExe).State)}）";
         foreach (var finding in LegacyAclFindings)
         {
             yield return "旧版权限残留：" + finding.FilePath + " —— " + finding.Detail;
@@ -688,20 +777,31 @@ public sealed class FocusController
     // ------------------------------------------------------------------ 内部
 
     /// <summary>
-    /// 目录恢复处理的，是否<b>就是记录中那一个文件</b>。
+    /// 目录恢复处理的，是否<b>就是记录中的那一个（些）文件</b>。
     /// 判据故意收紧到"路径完全相同"：<b>同名不代表同一个文件</b> —— 别处完全可能存在另一个
     /// 同名的锁定文件（评审复现场景：真身被搬到 A，B 里是另一份同名的）。
     /// 路径不同就是无法确认，此时保留线索并把两个路径都报出来，由用户核对。
     /// </summary>
     private bool RecordedPathRecoveredExactly(IReadOnlyList<string> recoveredLockedPaths)
     {
-        if (string.IsNullOrWhiteSpace(_state.RecordedLockedPath))
+        var expected = RecordedLockedPathsAll();
+        if (expected.Count == 0)
         {
             return true; // 本来就没有记录
         }
 
-        return recoveredLockedPaths.Any(p => SamePath(p, _state.RecordedLockedPath!));
+        return recoveredLockedPaths.Any(recovered => expected.Any(e => SamePath(recovered, e)));
     }
+
+    /// <summary>记录中的锁定文件名全集（含后缀；新旧字段合并去重）。</summary>
+    private IReadOnlyList<string> RecordedLockedPathsAll() =>
+        RecordedTargetPathsAll()
+            .Select(p => p + TargetLocker.LockedSuffix)
+            .Concat(string.IsNullOrWhiteSpace(_state.RecordedLockedPath)
+                ? Array.Empty<string>()
+                : new[] { _state.RecordedLockedPath! })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     private static bool SamePath(string left, string right)
     {
@@ -725,16 +825,16 @@ public sealed class FocusController
         string.Join("；", steps.Where(s => s.Status == status).Select(s => s.Name));
 
     /// <summary>把本次刚做的改动原路收回，返回收不回来的项。</summary>
-    private List<string> Rollback(bool hostsAppliedHere, string? renamedHere)
+    private List<string> Rollback(bool hostsAppliedHere, IReadOnlyList<string> renamedHere)
     {
         var failures = new List<string>();
 
-        if (renamedHere is not null)
+        foreach (var lockedPath in renamedHere)
         {
             try
             {
-                TargetLocker.FromLockedPath(renamedHere).Unlock();
-                Say("已回滚本次的文件改名");
+                TargetLocker.FromLockedPath(lockedPath + TargetLocker.LockedSuffix).Unlock();
+                Say("已回滚本次的文件改名：" + Path.GetFileName(lockedPath));
             }
             catch (Exception ex)
             {

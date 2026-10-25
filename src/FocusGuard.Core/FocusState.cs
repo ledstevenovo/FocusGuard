@@ -36,6 +36,13 @@ public sealed class FocusState
 
     public string? RecordedLockedPath { get; set; }
 
+    /// <summary>
+    /// 多目标时代的锁定意图（原文件路径，锁定文件名可由后缀推导）。
+    /// 旧字段 <see cref="RecordedTargetPath"/>/<see cref="RecordedLockedPath"/> 继续保留，
+    /// 升级前的旧状态文件仍按原语义恢复；新会话两个来源合并处理。
+    /// </summary>
+    public List<string> RecordedLockedTargets { get; set; } = new();
+
     public string? RecordedHostsPath { get; set; }
 
     public bool AppliedHostsBlock { get; set; }
@@ -74,6 +81,7 @@ public sealed class FocusState
 
             loaded.Phase ??= FocusPhases.Idle;
             loaded.UnresolvedItems ??= new List<string>();
+            loaded.RecordedLockedTargets ??= new List<string>();
             usable = true;
             return loaded;
         }

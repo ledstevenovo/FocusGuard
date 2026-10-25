@@ -1458,7 +1458,7 @@ Check("M3 只封网站（LockTargetExe=false）+ 目标不存在：不产生虚�
         var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
         var start1 = controller.Start();
         AssertTrue(start1.Success, "第一次开始失败：" + start1.FailureText);
-        AssertTrue(start1.Steps.Any(s => s.Name == "阻止 FM 启动" && s.Status == StepStatus.Skipped),
+        AssertTrue(start1.Steps.Any(s => s.Name == "锁定程序文件" && s.Status == StepStatus.Skipped),
             "关闭文件锁定时应有跳过步骤");
 
         var stop1 = controller.Stop();
@@ -1507,7 +1507,7 @@ Check("M5 开启文件锁定但目标不存在：明确跳过且不留恢复记�
         var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
         var start = controller.Start();
         AssertTrue(start.Success, "目标不存在时开始却失败：" + start.FailureText);
-        AssertTrue(start.Steps.Any(s => s.Name == "阻止 FM 启动" && s.Status == StepStatus.Skipped),
+        AssertTrue(start.Steps.Any(s => s.Name == "锁定程序文件" && s.Status == StepStatus.Skipped),
             "没有报告跳过");
         AssertTrue(controller.UnlocatedRecord is null, "留下了指向从未被锁定文件的恢复记录");
 
@@ -1628,6 +1628,373 @@ Check("O2 超时不挂死：到时杀进程树，退出码 -1 按失败处理", 
     AssertTrue(!result.Ok, "被超时杀掉的命令不得报告成功");
     AssertEqual(-1, result.ExitCode, "超时退出的退出码应为 -1");
     AssertTrue(sw.Elapsed < TimeSpan.FromSeconds(10), "超时机制没有生效（耗时 " + sw.Elapsed + ")");
+});
+
+Console.WriteLine();
+Console.WriteLine("== P. 设置页：域名规则 DomainRules 与空配置语义 ==");
+
+Check("P1 站点输入解析：主域/子域/整条网址/端口/ userinfo/尾点/大小写都归到主域", () =>
+{
+    AssertEqual("hupu.com", DomainRules.TryParseSite("hupu.com"), "主域应原样归位");
+    AssertEqual("hupu.com", DomainRules.TryParseSite("www.hupu.com"), "www 前缀应剥到主域");
+    AssertEqual("hupu.com", DomainRules.TryParseSite("m.hupu.com"), "子域应归到主域");
+    AssertEqual("hupu.com", DomainRules.TryParseSite("https://www.hupu.com/compete"), "网址形态应取主机");
+    AssertEqual("hupu.com", DomainRules.TryParseSite("hupu.com:8080/x?a=1#top"), "端口与路径应剥掉");
+    AssertEqual("hupu.com", DomainRules.TryParseSite("user:pass@m.hupu.com/"), "userinfo 应剥掉");
+    AssertEqual("hupu.com", DomainRules.TryParseSite("HUPU.COM."), "大小写与尾点应规范化");
+    AssertEqual("hupu.com", DomainRules.TryParseSite("  hupu.com  "), "首尾空白应剥掉");
+});
+
+Check("P2 两段式公战后缀取三段主域，其余取两段", () =>
+{
+    AssertEqual("sina.com.cn", DomainRules.TryParseSite("www.sina.com.cn"), "com.cn 下应取三段");
+    AssertEqual("sina.com.cn", DomainRules.TryParseSite("sina.com.cn"), "三段主域本身应保持");
+    AssertEqual("foo.co.uk", DomainRules.TryParseSite("www.foo.co.uk"), "co.uk 下应取三段");
+    AssertEqual("hupu.com", DomainRules.TryParseSite("www.hupu.com"), "普通后缀应取两段");
+    AssertTrue(DomainRules.TryParseSite("com.cn") is null, "只有后缀本身没有主域，应返回 null");
+});
+
+Check("P3 非法站点输入必须返回 null，而不是猜出一个主域", () =>
+{
+    AssertTrue(DomainRules.TryParseSite("") is null, "空串");
+    AssertTrue(DomainRules.TryParseSite("   ") is null, "纯空白");
+    AssertTrue(DomainRules.TryParseSite("localhost") is null, "无点的单标签");
+    AssertTrue(DomainRules.TryParseSite("a b.com") is null, "标签含空格");
+    AssertTrue(DomainRules.TryParseSite("-bad.com") is null, "标签以连字符开头");
+    AssertTrue(DomainRules.TryParseSite("https://") is null, "只有协议没有主机");
+    AssertTrue(DomainRules.TryParseSite("https:///path") is null, "路径形态没有主机");
+});
+
+Check("P4 中文 IDN 输入转成 hosts 能写的 punycode 主域", () =>
+{
+    var site = DomainRules.TryParseSite("https://虎扑.com/");
+    AssertTrue(site is not null, "合法 IDN 不应被拒");
+    AssertTrue(site!.StartsWith("xn--", StringComparison.Ordinal), "应转成 punycode 前缀（实际 " + site + "）");
+    AssertTrue(site.EndsWith(".com", StringComparison.Ordinal), "后缀应保留（实际 " + site + "）");
+});
+
+Check("P5 家族展开：主域本身 + 常见子域，幂等且以主域为根", () =>
+{
+    var family = DomainRules.ExpandFamily("www.hupu.com"); // 传子域也按主域 hupu.com 展开
+    AssertEqual(1 + DomainRules.FamilyPrefixes.Length, family.Count, "家族数量应为主域 + 全部前缀");
+    AssertTrue(family.Contains("hupu.com"), "必须包含主域本身");
+    AssertTrue(family.Contains("www.hupu.com"), "必须包含 www");
+    AssertTrue(family.Contains("m.hupu.com"), "必须包含 m");
+    AssertTrue(family.Contains("bbs.hupu.com"), "必须包含 bbs");
+    AssertEqual(family.Count, family.Distinct().Count(), "家族内不得有重复");
+
+    AssertEqual(0, DomainRules.ExpandFamily("com.cn").Count, "非法主域应返回空家族，而不是瞎展开");
+});
+
+Check("P6 按主域分组：一站一行，归不出主域的条目按原样成组、绝不丢", () =>
+{
+    var groups = DomainRules.GroupBySite(new[]
+    {
+        "www.hupu.com", "hupu.com", "m.hupu.com", "bbs.hupu.com", "youtu.be", "junk",
+    });
+    AssertEqual(3, groups.Count, "应分成 hupu.com / youtu.be / junk 三组");
+    AssertEqual("hupu.com", groups[0].Site, "第一组应是 hupu.com");
+    AssertEqual(4, groups[0].Hostnames.Count, "hupu 组应有 4 个域名");
+    AssertEqual("junk", groups[1].Site, "归不出主域的条目应按原样成组（junk 序小于 youtu.be）");
+    AssertEqual("youtu.be", groups[2].Site, "youtu.be 自成主域");
+    AssertEqual(6, groups.Sum(g => g.Hostnames.Count), "分组的域名总数不得少于输入");
+});
+
+Check("P7 设置页删光列表是合法选择：空列表保存后重载不得被默认值复活", () =>
+{
+    var dir = NewTempDir("cfg-empty");
+    try
+    {
+        var path = Path.Combine(dir, "config.json");
+        new FocusConfig
+        {
+            BlockedDomains = new List<string>(),
+            BlockedProcessNames = new List<string>(),
+            TargetExe = @"C:\tmp\x.exe",
+        }.Save(path);
+
+        var loaded = FocusConfig.LoadOrCreate(path);
+        AssertEqual(0, loaded.BlockedDomains.Count, "空域名列表被默认值复活了");
+        AssertEqual(0, loaded.BlockedProcessNames.Count, "空进程列表被默认值复活了");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("P8 一个域名都没配置时，开始不得写出只有标记头尾的空 hosts 区块", () =>
+{
+    var dir = NewTempDir("no-domains");
+    try
+    {
+        var (config, hostsPath, target) = SetupCycle(dir);
+        config.BlockedDomains = new List<string>();
+        config.LockTargetExe = false; // 只验证 hosts 路径，文件锁定照常跳过
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+
+        var start = controller.Start();
+        AssertTrue(start.Success, "开始失败：" + start.FailureText);
+        AssertTrue(!new HostsBlocker(hostsPath).IsActive(), "不应在 hosts 里留下区块");
+        AssertTrue(start.Steps.Any(s => s.Name.Contains("网站规则") && s.Status == StepStatus.Skipped),
+            "网站规则步骤应标记为跳过");
+
+        var stop = controller.Stop();
+        AssertTrue(stop.Success, "结束失败：" + stop.FailureText);
+    }
+    finally { Nuke(dir); }
+});
+
+Check("P9 目标锁定进程名自动并入屏蔽名单：锁定开启才并入、去重、剥 .exe", () =>
+{
+    var already = ProcessGuard.EffectiveBlockedNames(
+        new[] { "fm", "Berkelium" }, null, @"D:\g\fm.exe", true);
+    AssertEqual(2, already.Count, "目标名已在名单里时不得重复并入");
+    AssertTrue(already.Contains("fm"), "应保留原有的 fm");
+
+    var merged = ProcessGuard.EffectiveBlockedNames(
+        new List<string>(), null, @"D:\g\Game.EXE", true);
+    AssertEqual(1, merged.Count, "空名单 + 目标锁定应并入目标进程名");
+    AssertEqual("Game", merged[0], "应剥掉 .exe 后缀并入");
+
+    var off = ProcessGuard.EffectiveBlockedNames(
+        new List<string>(), null, @"D:\g\game.exe", false);
+    AssertEqual(0, off.Count, "锁定关闭时不得并入旧单目标");
+
+    var noFile = ProcessGuard.EffectiveBlockedNames(
+        new List<string>(), null, @"D:\g\", true);
+    AssertEqual(0, noFile.Count, "路径里没有文件名时应安全跳过");
+});
+
+Check("P9b 屏蔽 exe 列表的进程名总是并入（与是否启用文件锁定无关）", () =>
+{
+    var locked = ProcessGuard.EffectiveBlockedNames(
+        new List<string>(), new[] { @"D:\g\a.exe", @"E:\x\B.EXE" }, null, true);
+    AssertEqual(2, locked.Count, "列表进程名应并入");
+    AssertTrue(locked.Contains("a") && locked.Contains("B"), "应剥掉 .exe 并入（实际 " + string.Join(",", locked) + "）");
+
+    var lockOff = ProcessGuard.EffectiveBlockedNames(
+        new List<string>(), new[] { @"D:\g\a.exe" }, null, false);
+    AssertEqual(1, lockOff.Count, "关闭文件锁定只影响旧单目标，列表进程名仍要并入");
+
+    var dup = ProcessGuard.EffectiveBlockedNames(
+        new[] { "A" }, new[] { @"D:\g\a.exe" }, @"D:\g\a.exe", true);
+    AssertEqual(1, dup.Count, "三种来源重名时应去重为一个");
+});
+
+Check("P10 开始前的进程检测走合并名单：目标程序在运行时能被发现", () =>
+{
+    // 探针就是测试进程自身（必然"正在运行"），不需要另起子进程
+    var selfPath = Environment.ProcessPath ?? throw new Exception("拿不到当前进程路径");
+    var selfName = Path.GetFileNameWithoutExtension(selfPath);
+    try
+    {
+        var dir = NewTempDir("kill-sync");
+        try
+        {
+            var config = new FocusConfig
+            {
+                BlockedProcessNames = new List<string>(),
+                TargetExe = selfPath,
+                LockTargetExe = true,
+            };
+            var controller = new FocusController(config, dir);
+            AssertTrue(
+                controller.RunningBlockedProcesses().Any(n => n.Equals(selfName, StringComparison.OrdinalIgnoreCase)),
+                "目标锁定开启时应通过并入的进程名发现目标在运行");
+
+            config.LockTargetExe = false;
+            var off = new FocusController(config, dir);
+            AssertEqual(0, off.RunningBlockedProcesses().Count,
+                "锁定关闭且显式名单为空时不应报告任何进程");
+        }
+        finally { Nuke(dir); }
+    }
+    finally
+    {
+        // 没有起任何子进程，无需清理
+    }
+});
+
+Console.WriteLine();
+Console.WriteLine("== Q. 屏蔽程序列表：多目标锁定与恢复 ==");
+
+Check("Q1 多目标锁定：列表里每个 exe 都被改名，结束全部恢复", () =>
+{
+    var dir = NewTempDir("multi");
+    try
+    {
+        var hostsPath = Path.Combine(dir, "hosts");
+        File.WriteAllBytes(hostsPath, HostsBytes(PristineHosts));
+        var a = Path.Combine(dir, "gameA.exe");
+        var b = Path.Combine(dir, "gameB.exe");
+        File.WriteAllText(a, "A");
+        File.WriteAllText(b, "B");
+
+        var config = new FocusConfig { TargetExe = "", BlockedExePaths = new List<string> { a, b } };
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+
+        var start = controller.Start();
+        AssertTrue(start.Success, "开始失败：" + start.FailureText);
+        AssertTrue(!File.Exists(a) && File.Exists(a + TargetLocker.LockedSuffix), "gameA 未被锁定");
+        AssertTrue(!File.Exists(b) && File.Exists(b + TargetLocker.LockedSuffix), "gameB 未被锁定");
+        AssertTrue(controller.TargetLockActive, "锁定状态未被识别");
+
+        var stop = controller.Stop();
+        AssertTrue(stop.Success, "结束失败：" + stop.FailureText);
+        AssertTrue(File.Exists(a) && File.Exists(b), "有文件未恢复原名");
+        AssertTrue(!File.Exists(a + TargetLocker.LockedSuffix) && !File.Exists(b + TargetLocker.LockedSuffix),
+            "锁定文件残留");
+        AssertTrue(controller.UnlocatedRecord is null && controller.UnresolvedItems.Count == 0, "记录未清干净");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("Q2 关闭文件锁定时列表文件完全不动，但进程名单仍并入", () =>
+{
+    var dir = NewTempDir("list-nolock");
+    try
+    {
+        var hostsPath = Path.Combine(dir, "hosts");
+        File.WriteAllBytes(hostsPath, HostsBytes(PristineHosts));
+        var a = Path.Combine(dir, "gameA.exe");
+        File.WriteAllText(a, "A");
+
+        var config = new FocusConfig
+        {
+            TargetExe = "",
+            BlockedExePaths = new List<string> { a },
+            LockTargetExe = false,
+        };
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+
+        AssertTrue(controller.Start().Success, "开始失败：" + controller.Start().FailureText);
+        AssertTrue(File.Exists(a) && !File.Exists(a + TargetLocker.LockedSuffix), "关闭锁定时文件被动到了");
+
+        var names = ProcessGuard.EffectiveBlockedNames(
+            config.BlockedProcessNames, config.BlockedExePaths, config.TargetExe, config.LockTargetExe);
+        AssertTrue(names.Contains("gameA"), "列表进程名未并入结束名单（实际 " + string.Join(",", names) + "）");
+
+        AssertTrue(controller.Stop().Success, "结束失败");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("Q3 列表里目标缺失：跳过且不留虚假记录，其余照常锁定", () =>
+{
+    var dir = NewTempDir("list-missing");
+    try
+    {
+        var hostsPath = Path.Combine(dir, "hosts");
+        File.WriteAllBytes(hostsPath, HostsBytes(PristineHosts));
+        var a = Path.Combine(dir, "gameA.exe");
+        var ghost = Path.Combine(dir, "ghost.exe");
+        File.WriteAllText(a, "A");
+
+        var config = new FocusConfig { TargetExe = "", BlockedExePaths = new List<string> { a, ghost } };
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+
+        var start = controller.Start();
+        AssertTrue(start.Success, "开始失败：" + start.FailureText);
+        AssertTrue(start.Steps.Any(s => s.Name == "锁定程序文件" && s.Status == StepStatus.Skipped
+                                        && (s.Detail ?? "").Contains(ghost)),
+            "缺失目标没有如实跳过");
+        AssertTrue(File.Exists(a + TargetLocker.LockedSuffix), "存在的目标未被锁定");
+        // 意图记录里不得有 ghost：专注期间 UnlocatedRecord 因 a 处于锁定态本就可能非空，
+        // 真正要验证的是状态文件里没留下指向"从未被锁定文件"的线索
+        var recordedList = FocusState.Load(Path.Combine(dir, "state.json")).RecordedLockedTargets;
+        AssertTrue(!recordedList.Any(p => p.Contains("ghost")), "缺失目标留下了虚假恢复记录");
+        AssertTrue(recordedList.Any(p => p.Contains("gameA")), "存在的目标没进记录");
+
+        AssertTrue(controller.Stop().Success, "结束失败");
+        AssertTrue(File.Exists(a), "文件未恢复");
+        AssertTrue(controller.Start().Success, "第二次开始被虚假记录阻塞：" + controller.Start().FailureText);
+    }
+    finally { Nuke(dir); }
+});
+
+Check("Q4 列表里出现文件冲突：开始失败并回滚已做的一切", () =>
+{
+    var dir = NewTempDir("list-conflict");
+    try
+    {
+        var hostsPath = Path.Combine(dir, "hosts");
+        File.WriteAllBytes(hostsPath, HostsBytes(PristineHosts));
+        var a = Path.Combine(dir, "gameA.exe");
+        var c = Path.Combine(dir, "gameC.exe");
+        File.WriteAllText(a, "A");
+        File.WriteAllText(c, "C");
+        File.WriteAllText(c + TargetLocker.LockedSuffix, "conflict");   // 制造冲突
+
+        var config = new FocusConfig { TargetExe = "", BlockedExePaths = new List<string> { a, c } };
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+
+        var start = controller.Start();
+        AssertTrue(!start.Success, "存在冲突却报告开始成功");
+        AssertTrue(File.Exists(a) && !File.Exists(a + TargetLocker.LockedSuffix), "回滚漏掉了已锁定的文件");
+        AssertTrue(!new HostsBlocker(hostsPath).IsActive(), "回滚漏掉了 hosts 区块");
+        AssertTrue(File.Exists(c) && File.Exists(c + TargetLocker.LockedSuffix), "冲突的两份文件被动了");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("Q5 旧配置迁移：存在的旧单目标并入列表，显式空列表不回填", () =>
+{
+    var dir = NewTempDir("migrate");
+    try
+    {
+        var path = Path.Combine(dir, "config.json");
+        var legacy = Path.Combine(dir, "old.exe");
+        File.WriteAllText(legacy, "x");
+
+        new FocusConfig { TargetExe = legacy, LockTargetExe = true }.Save(path);
+        var loaded = FocusConfig.LoadOrCreate(path);
+        AssertEqual(1, loaded.BlockedExePaths!.Count, "旧单目标应自动并入列表");
+        AssertEqual(legacy, loaded.BlockedExePaths[0], "并入的路径不对");
+
+        loaded.BlockedExePaths = new List<string>();
+        loaded.Save(path);
+        var reloaded = FocusConfig.LoadOrCreate(path);
+        AssertEqual(0, reloaded.BlockedExePaths!.Count, "空列表不得被旧目标复活");
+
+        new FocusConfig { TargetExe = Path.Combine(dir, "nope.exe"), LockTargetExe = true }.Save(path);
+        AssertEqual(0, FocusConfig.LoadOrCreate(path).BlockedExePaths!.Count, "不存在的旧目标不应并入");
+
+        new FocusConfig { TargetExe = legacy, LockTargetExe = false }.Save(path);
+        AssertEqual(0, FocusConfig.LoadOrCreate(path).BlockedExePaths!.Count, "锁定关闭的旧配置不应并入");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("Q6 多目标未定位记录：阻塞开始、保留线索，放弃后放行", () =>
+{
+    var dir = NewTempDir("multi-unlocated");
+    try
+    {
+        var hostsPath = Path.Combine(dir, "hosts");
+        File.WriteAllBytes(hostsPath, HostsBytes(PristineHosts));
+        var a = Path.Combine(dir, "gameA.exe");
+        var ghost = Path.Combine(dir, "ghost.exe");
+        File.WriteAllText(a, "A");
+
+        // 模拟异常退出后的残留：记录里有 a（在位）和一个已消失的 ghost
+        new FocusState
+        {
+            IsFocusing = true,
+            Phase = FocusPhases.Locked,
+            AppliedTargetLock = true,
+            RecordedLockedTargets = new List<string> { a, ghost },
+        }.Save(Path.Combine(dir, "state.json"));
+
+        var config = new FocusConfig { TargetExe = "", BlockedExePaths = new List<string> { a } };
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+        AssertTrue(controller.UnlocatedRecord is not null, "缺失的记录目标应报告未定位");
+        AssertTrue(!controller.Start().Success, "有未定位记录时开始必须被拒绝");
+
+        AssertTrue(controller.DiscardUnlocatedRecord("测试"), "放弃记录失败");
+        AssertTrue(controller.UnlocatedRecord is null, "放弃后仍报告未定位");
+        AssertTrue(controller.Start().Success, "放弃后开始失败：" + controller.Start().FailureText);
+        AssertTrue(controller.Stop().Success, "结束失败：" + controller.Stop().FailureText);
+        AssertTrue(File.Exists(a), "文件未恢复");
+    }
+    finally { Nuke(dir); }
 });
 
 Console.WriteLine();
