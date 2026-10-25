@@ -81,7 +81,6 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <DockPanel Grid.Row="0" Margin="20,14,12,0">
@@ -224,6 +223,14 @@
                     <local:HeatmapControl x:Name="Heatmap"
                                           Margin="6,10,0,0" />
 
+                    <!-- 趣味脚注：按当前筛选范围总时长换算，置于热力图与趋势图之间 -->
+                    <TextBlock x:Name="FooterText"
+                               Text=""
+                               FontSize="13"
+                               Foreground="#B4B2A9"
+                               Margin="6,10,6,0"
+                               TextAlignment="Center" />
+
                     <!-- 近 7 天（按天）与 近 8 周（按周，周一为周首） -->
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -243,14 +250,6 @@
                     </Grid>
                 </StackPanel>
             </ScrollViewer>
-
-            <TextBlock x:Name="FooterText"
-                       Grid.Row="2"
-                       Text=""
-                       FontSize="11"
-                       Foreground="#B4B2A9"
-                       Margin="24,0,24,14"
-                       TextAlignment="Center" />
         </Grid>
     </Border>
 </Window>
