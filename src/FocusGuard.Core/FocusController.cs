@@ -16,8 +16,15 @@ public sealed class FocusController
     private readonly FocusConfig _config;
     private readonly HostsBlocker _hosts;
     private readonly string _statePath;
+    private readonly FocusHistory _history;
     private bool _stateFileUsable;
     private FocusState _state;
+
+    /// <summary>
+    /// 仅当本实例内 Start() 成功后为 true。崩溃重启的实例里它天然是 false，
+    /// 因此恢复性解除永远不会写进统计 —— 只记"善始善终"的会话（专注统计方案 §2.1）。
+    /// </summary>
+    private bool _sessionFromThisInstance;
 
     public event Action<string>? Log;
 
@@ -28,9 +35,13 @@ public sealed class FocusController
         _hosts = hostsBlocker ?? new HostsBlocker();
         _state = FocusState.TryLoad(_statePath, out var usable);
         _stateFileUsable = usable;
+        _history = FocusHistory.Load(Path.Combine(dataDirectory, "history.json"));
     }
 
     public FocusConfig Config => _config;
+
+    /// <summary>专注历史（含聚合查询），供首页"今日累计"与统计页读取。</summary>
+    public FocusHistory History => _history;
 
     public bool IsFocusing => _state.IsFocusing;
 
@@ -363,6 +374,7 @@ public sealed class FocusController
             _state.AppliedTargetLock = TargetLockActive;
             _state.UnresolvedItems = new List<string>();
             _state.LastOperation = "专注开始";
+            _sessionFromThisInstance = true;
 
             if (!PersistState())
             {
@@ -501,6 +513,14 @@ public sealed class FocusController
                 Say(_state.LastOperation);
                 return new OperationResult(false, steps);
             }
+
+            // 统计记账：只记"本实例内正常开始、最终解除成功"的会话（专注统计方案 §2.1）。
+            // 记录失败只写日志 —— 解除成功就是成功，丢一条统计不是用户的损失。
+            if (_sessionFromThisInstance && _state.StartedAt is not null)
+            {
+                _history.TryAppend(new FocusSession(_state.StartedAt.Value, DateTimeOffset.Now));
+            }
+            _sessionFromThisInstance = false;
 
             _state.IsFocusing = false;
             _state.StartedAt = null;

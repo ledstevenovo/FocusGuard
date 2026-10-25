@@ -1,0 +1,187 @@
+<Window x:Class="FocusGuard.App.BackfillDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="FocusGuard 补记"
+        Width="400" Height="252"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        FontFamily="Microsoft YaHei UI, Segoe UI"
+        UseLayoutRounding="True">
+
+    <Window.Resources>
+        <!-- 圆角按钮模板：与设置页同款（Background/Foreground/Padding 由各 Style 透传） -->
+        <ControlTemplate x:Key="RoundButtonTemplate" TargetType="Button">
+            <Border x:Name="Bd" CornerRadius="8" Background="{TemplateBinding Background}">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Margin="{TemplateBinding Padding}"
+                                  TextElement.Foreground="{TemplateBinding Foreground}" />
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="Bd" Property="Opacity" Value="0.86" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Template" Value="{StaticResource RoundButtonTemplate}" />
+            <Setter Property="Background" Value="#185FA5" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Padding" Value="18,0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        </Style>
+
+        <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+            <Setter Property="Background" Value="#EEF1F4" />
+            <Setter Property="Foreground" Value="#374151" />
+        </Style>
+    </Window.Resources>
+
+    <Border x:Name="Root"
+            CornerRadius="16"
+            Background="#FAFAFA"
+            BorderBrush="#E5E7EB"
+            BorderThickness="1"
+            MouseLeftButtonDown="Root_MouseLeftButtonDown">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <DockPanel Grid.Row="0" Margin="20,14,12,0">
+                <Button x:Name="CloseButton"
+                        DockPanel.Dock="Right"
+                        Content="✕"
+                        Width="26" Height="26"
+                        FontSize="13"
+                        Foreground="#B4B2A9"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        FocusVisualStyle="{x:Null}"
+                        Click="Cancel_Click">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="Transparent">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  TextElement.Foreground="{TemplateBinding Foreground}" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <TextBlock Text="补记"
+                           FontSize="12"
+                           Foreground="#9CA3AF"
+                           VerticalAlignment="Center" />
+            </DockPanel>
+
+            <StackPanel Grid.Row="1" Margin="24,8,24,0">
+                <TextBlock Text="补记今日专注时长"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           Foreground="#374151" />
+                <TextBlock Text="忘记点开始专注的时段，把漏记的时长补进来，计入今天的统计"
+                           FontSize="11"
+                           Foreground="#9CA3AF"
+                           TextWrapping="Wrap"
+                           Margin="0,4,0,0" />
+
+                <TextBlock x:Name="TodayTotalText"
+                           Text=""
+                           FontSize="11"
+                           Foreground="#185FA5"
+                           Margin="0,10,0,0" />
+
+                <Grid Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="HoursBox"
+                             Grid.Column="0"
+                             Width="72" Height="32"
+                             FontSize="13"
+                             TextAlignment="Center"
+                             Foreground="#374151"
+                             CaretBrush="#374151"
+                             Background="#FFFFFF"
+                             BorderBrush="#E5E7EB"
+                             BorderThickness="1"
+                             Padding="4,0"
+                             VerticalContentAlignment="Center"
+                             Text="0" />
+                    <TextBlock Grid.Column="1"
+                               Text="小时"
+                               FontSize="13"
+                               Foreground="#374151"
+                               VerticalAlignment="Center"
+                               Margin="8,0,0,0" />
+                    <TextBox x:Name="MinutesBox"
+                             Grid.Column="2"
+                             Width="72" Height="32"
+                             Margin="16,0,0,0"
+                             FontSize="13"
+                             TextAlignment="Center"
+                             Foreground="#374151"
+                             CaretBrush="#374151"
+                             Background="#FFFFFF"
+                             BorderBrush="#E5E7EB"
+                             BorderThickness="1"
+                             Padding="4,0"
+                             VerticalContentAlignment="Center"
+                             Text="0" />
+                    <TextBlock Grid.Column="3"
+                               Text="分钟"
+                               FontSize="13"
+                               Foreground="#374151"
+                               VerticalAlignment="Center"
+                               Margin="8,0,0,0" />
+                </Grid>
+
+                <TextBlock x:Name="MessageText"
+                           Text=""
+                           FontSize="11"
+                           Foreground="#DC2626"
+                           Margin="0,8,0,0"
+                           TextWrapping="Wrap"
+                           Visibility="Collapsed" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="2"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Margin="20,10,20,16">
+                <Button Style="{StaticResource PrimaryButton}"
+                        Content="补记"
+                        Width="88"
+                        IsDefault="True"
+                        Click="Confirm_Click" />
+                <Button Style="{StaticResource SecondaryButton}"
+                        Content="取消"
+                        Width="88"
+                        Margin="10,0,0,0"
+                        Click="Cancel_Click" />
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

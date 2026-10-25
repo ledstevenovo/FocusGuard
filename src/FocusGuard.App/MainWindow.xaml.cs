@@ -189,6 +189,8 @@ public partial class MainWindow : Window
         MinimizeButton.IsEnabled = false;
         // 设置页会改配置并落盘，操作进行中打开会与锁定/解除交错，同样禁用
         SettingsButton.IsEnabled = false;
+        // 统计页是主窗口的模态窗口，busy 期间同样不允许打开
+        StatsButton.IsEnabled = false;
         ActionButton.Content = text;
     }
 
@@ -199,6 +201,7 @@ public partial class MainWindow : Window
         CloseButton.IsEnabled = true;
         MinimizeButton.IsEnabled = true;
         SettingsButton.IsEnabled = true;
+        StatsButton.IsEnabled = true;
         ApplyVisualState();
     }
 
@@ -278,6 +281,10 @@ public partial class MainWindow : Window
         ElapsedText.Foreground = locked ? AccentText : MutedText;
         ElapsedText.Visibility = _controller.Config.ShowElapsed ? Visibility.Visible : Visibility.Collapsed;
 
+        // 今日累计与已专注同一套配色与可见性约定（专注统计方案 §4）
+        TodayText.Foreground = locked ? AccentText : MutedText;
+        TodayText.Visibility = _controller.Config.ShowElapsed ? Visibility.Visible : Visibility.Collapsed;
+
         // 说明行与 ElapsedText 同一套配色惯例；文本框本身保持固定浅色纸面，不随状态变
         NotepadCaption.Foreground = locked ? AccentText : MutedText;
 
@@ -289,6 +296,8 @@ public partial class MainWindow : Window
 
     private void UpdateElapsed()
     {
+        UpdateToday();
+
         if (!_controller.IsLockedNow)
         {
             ElapsedText.Text = string.Empty;
@@ -308,6 +317,29 @@ public partial class MainWindow : Window
             span = TimeSpan.Zero;
         }
         ElapsedText.Text = $"已专注 {(int)span.TotalHours:00}:{span.Minutes:00}:{span.Seconds:00}";
+    }
+
+    /// <summary>
+    /// 今日累计 = 今天已完成会话总和 + 进行中会话的实时时长；进行中的部分归属其开始日，
+    /// 跨午夜的进行中会话不算进今天（与最终入账口径一致，专注统计方案 §2.3）。
+    /// </summary>
+    private void UpdateToday()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Now);
+        var total = _controller.History.TotalOn(today);
+
+        var started = _controller.StartedAt;
+        if (_controller.IsLockedNow && started is not null &&
+            DateOnly.FromDateTime(started.Value.LocalDateTime) == today)
+        {
+            var live = DateTimeOffset.Now - started.Value;
+            if (live > TimeSpan.Zero)
+            {
+                total += live;
+            }
+        }
+
+        TodayText.Text = $"今日累计 {FocusHistory.FormatDuration(total)}";
     }
 
     private async void OnClosing(object? sender, CancelEventArgs e)
@@ -407,6 +439,16 @@ public partial class MainWindow : Window
             // 域名数量等摘要行可能已变，刷新底部状态
             ApplyVisualState();
         }
+    }
+
+    /// <summary>
+    /// 打开统计页。模态快照：打开时读一次历史，进行中的会话不计入（专注统计方案 §2.3）；
+    /// busy 期间按钮已被禁用，不会与锁定/解除交错；专注进行中允许查看。
+    /// </summary>
+    private void StatsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var stats = new StatsWindow(_controller.History) { Owner = this };
+        stats.ShowDialog();
     }
 
     /// <summary>

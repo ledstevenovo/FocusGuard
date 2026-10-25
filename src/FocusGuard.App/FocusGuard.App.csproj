@@ -9,7 +9,7 @@
     <RootNamespace>FocusGuard.App</RootNamespace>
     <AssemblyName>FocusGuard</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>2.0.0</Version>
+    <Version>2.1.0</Version>
     <AssemblyTitle>FocusGuard</AssemblyTitle>
     <Product>FocusGuard</Product>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

@@ -1997,6 +1997,345 @@ Check("Q6 多目标未定位记录：阻塞开始、保留线索，放弃后放�
     finally { Nuke(dir); }
 });
 
+Console.WriteLine("== S. 专注统计 ==");
+
+FocusHistory ReloadHistory(string dir) => FocusHistory.Load(Path.Combine(dir, "history.json"));
+
+// 最小配置：无域名、无目标，Start/Stop 走空步骤即可成功，测试只关心记账本身
+(FocusConfig Config, string HostsPath) SetupStats(string dir)
+{
+    var hostsPath = Path.Combine(dir, "hosts");
+    File.WriteAllBytes(hostsPath, HostsBytes(PristineHosts));
+    return (new FocusConfig
+    {
+        BlockedDomains = new List<string>(),
+        BlockedExePaths = new List<string>(),
+        BlockedProcessNames = new List<string>(),
+        TargetExe = "",
+        LockTargetExe = false,
+    }, hostsPath);
+}
+
+// 用本地时区构造墙钟时间：StartDay 依赖 LocalDateTime，这样测试在任何时区的机器上都成立
+DateTimeOffset At(int year, int month, int day, int hour, int minute = 0) =>
+    new(new DateTime(year, month, day, hour, minute, 0));
+
+Check("S1 正常会话在结束成功后写入一条记录", () =>
+{
+    var dir = NewTempDir("stat-normal");
+    try
+    {
+        var (config, hostsPath) = SetupStats(dir);
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+        AssertTrue(controller.Start().Success, "前置的开始操作失败");
+        var startedAt = controller.StartedAt;
+        AssertTrue(startedAt is not null, "开始时间缺失");
+        AssertTrue(controller.Stop().Success, "结束失败");
+
+        var sessions = ReloadHistory(dir).Sessions;
+        AssertEqual(1, sessions.Count, "记录条数不对");
+        AssertEqual(startedAt!.Value.UtcDateTime, sessions[0].StartedAt.UtcDateTime, "记录的开始时间不对");
+        AssertTrue(sessions[0].EndedAt >= sessions[0].StartedAt, "结束时间早于开始时间");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S2 崩溃残留的恢复性解除不写入记录（核心）", () =>
+{
+    var dir = NewTempDir("stat-crash");
+    try
+    {
+        var (config, hostsPath) = SetupStats(dir);
+        new FocusState
+        {
+            IsFocusing = true,
+            Phase = FocusPhases.Locked,
+            StartedAt = DateTimeOffset.Now.AddDays(-1),
+        }.Save(Path.Combine(dir, "state.json"));
+
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+        AssertTrue(controller.IsLockedNow, "前置的残留场景没有复现");
+        AssertTrue(controller.Stop().Success, "恢复性解除失败：" + controller.Stop().FailureText);
+
+        AssertEqual(0, ReloadHistory(dir).Sessions.Count, "恢复性解除不应写入记录");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S3 解除失败不入账，重试成功后按原开始时间入账", () =>
+{
+    var dir = NewTempDir("stat-retry");
+    try
+    {
+        var (config, hostsPath) = SetupStats(dir);
+        config.BlockedDomains = new List<string> { "zhihu.com" };   // 需要真实的 hosts 写入才能注入失败
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+        AssertTrue(controller.Start().Success, "前置的开始操作失败");
+        var startedAt = controller.StartedAt!.Value;
+
+        BreakHostsWrite(hostsPath);
+        AssertTrue(!controller.Stop().Success, "前置的失败场景没有复现");
+        AssertEqual(0, ReloadHistory(dir).Sessions.Count, "解除失败时不应入账");
+
+        UnbreakHostsWrite(hostsPath);
+        AssertTrue(controller.Stop().Success, "重试失败：" + controller.Stop().FailureText);
+        var sessions = ReloadHistory(dir).Sessions;
+        AssertEqual(1, sessions.Count, "重试成功后应恰好一条记录");
+        AssertEqual(startedAt.UtcDateTime, sessions[0].StartedAt.UtcDateTime, "应按原开始时间入账");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S4 开始失败不入账", () =>
+{
+    var dir = NewTempDir("stat-start-fail");
+    try
+    {
+        var (config, hostsPath) = SetupStats(dir);
+        config.BlockedDomains = new List<string> { "zhihu.com" };
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+
+        BreakHostsWrite(hostsPath);
+        AssertTrue(!controller.Start().Success, "前置的失败场景没有复现");
+        AssertEqual(0, ReloadHistory(dir).Sessions.Count, "开始失败不应入账");
+
+        UnbreakHostsWrite(hostsPath);
+        AssertTrue(controller.Start().Success, "后续开始失败");
+        AssertTrue(controller.Stop().Success, "后续结束失败");
+        AssertEqual(1, ReloadHistory(dir).Sessions.Count, "后续善始善终应入账一条");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S5 跨午夜会话整场归属开始日", () =>
+{
+    var dir = NewTempDir("stat-midnight");
+    try
+    {
+        var history = FocusHistory.Load(Path.Combine(dir, "history.json"));
+        AssertTrue(history.TryAppend(new FocusSession(At(2026, 10, 24, 23, 0), At(2026, 10, 25, 1, 0))), "写入失败");
+
+        AssertEqual(TimeSpan.FromHours(2), history.TotalOn(new DateOnly(2026, 10, 24)), "开始日时长不对");
+        AssertEqual(TimeSpan.Zero, history.TotalOn(new DateOnly(2026, 10, 25)), "次日不应计入");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S6 历史文件损坏：自愈为空、坏文件改名保留", () =>
+{
+    var dir = NewTempDir("stat-corrupt");
+    try
+    {
+        var path = Path.Combine(dir, "history.json");
+        File.WriteAllText(path, "not-json{{{");
+
+        var history = FocusHistory.Load(path);
+        AssertEqual(0, history.Sessions.Count, "损坏后应从空历史开始");
+        AssertTrue(!File.Exists(path), "坏文件不应原地保留");
+        AssertTrue(Directory.GetFiles(dir, "history.json.corrupt-*").Length == 1, "坏文件未改名保留");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S7 统计落盘失败不影响解除成功（核心）", () =>
+{
+    var dir = NewTempDir("stat-write-fail");
+    try
+    {
+        var (config, hostsPath) = SetupStats(dir);
+        var historyPath = Path.Combine(dir, "history.json");
+        File.WriteAllText(historyPath, "[]");
+
+        var controller = new FocusController(config, dir, new HostsBlocker(hostsPath));
+        AssertTrue(controller.Start().Success, "前置的开始操作失败");
+
+        // 独占打开 history.json：TryAppend 的整体替换必然失败
+        using (File.Open(historyPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            var stop = controller.Stop();
+            AssertTrue(stop.Success, "统计写不进去不应拖垮解除：" + stop.FailureText);
+        }
+
+        AssertEqual("[]", File.ReadAllText(historyPath).Trim(), "文件内容不应被改动");
+        AssertEqual(0, ReloadHistory(dir).Sessions.Count, "失败后不应有新记录");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S8 按天聚合：同日累加、空日补零", () =>
+{
+    var dir = NewTempDir("stat-daily");
+    try
+    {
+        var history = FocusHistory.Load(Path.Combine(dir, "history.json"));
+        history.TryAppend(new FocusSession(At(2026, 10, 20, 9, 0), At(2026, 10, 20, 10, 0)));
+        history.TryAppend(new FocusSession(At(2026, 10, 20, 15, 0), At(2026, 10, 20, 15, 30)));
+        history.TryAppend(new FocusSession(At(2026, 10, 22, 20, 0), At(2026, 10, 22, 22, 0)));
+
+        var totals = history.DailyTotals(new DateOnly(2026, 10, 20), new DateOnly(2026, 10, 22));
+        AssertEqual(3, totals.Count, "区间天数不对");
+        AssertEqual(TimeSpan.FromMinutes(90), totals[0].Total, "首日应累加两场");
+        AssertEqual(TimeSpan.Zero, totals[1].Total, "空日应补零");
+        AssertEqual(TimeSpan.FromHours(2), totals[2].Total, "末日时长不对");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S9 按周聚合：周一为周首、含本周", () =>
+{
+    var dir = NewTempDir("stat-weekly");
+    try
+    {
+        var history = FocusHistory.Load(Path.Combine(dir, "history.json"));
+        // 2026-10-21 是周三，其所在周从 10-19（周一）开始
+        history.TryAppend(new FocusSession(At(2026, 10, 12, 9, 0), At(2026, 10, 12, 10, 0)));  // 上周一 1h
+        history.TryAppend(new FocusSession(At(2026, 10, 18, 9, 0), At(2026, 10, 18, 11, 0)));  // 上周日 2h
+        history.TryAppend(new FocusSession(At(2026, 10, 19, 9, 0), At(2026, 10, 19, 10, 0)));  // 本周一 1h
+
+        var weeks = history.WeeklyTotals(2, new DateOnly(2026, 10, 21));
+        AssertEqual(2, weeks.Count, "周数不对");
+        AssertEqual(new DateOnly(2026, 10, 12), weeks[0].WeekStart, "首周起始日不是周一");
+        AssertEqual(TimeSpan.FromHours(3), weeks[0].Total, "周一与周日应归入同一周");
+        AssertEqual(new DateOnly(2026, 10, 19), weeks[1].WeekStart, "本周起始日不对");
+        AssertEqual(TimeSpan.FromHours(1), weeks[1].Total, "本周时长不对");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S10 连续天数：最长段跳档断开、当前连击从今天或昨天起算", () =>
+{
+    var dir = NewTempDir("stat-streak");
+    try
+    {
+        var history = FocusHistory.Load(Path.Combine(dir, "history.json"));
+        var today = new DateOnly(2026, 10, 25);
+        var first = today.AddDays(-5);
+        for (var i = 0; i < 6; i++)
+        {
+            if (i == 2)
+            {
+                continue;   // 中间断档一天
+            }
+            var day = first.AddDays(i);
+            history.TryAppend(new FocusSession(At(day.Year, day.Month, day.Day, 9, 0), At(day.Year, day.Month, day.Day, 10, 0)));
+        }
+
+        AssertEqual(5, history.ActiveDayCount(first, today), "活跃天数不对");
+        AssertEqual(3, history.LongestStreak(first, today), "最长连续段不对");
+        AssertEqual(3, history.CurrentStreak(today), "当前连击应包含今天");
+        AssertEqual(3, history.CurrentStreak(today.AddDays(1)), "今天无记录应从昨天起算");
+        AssertEqual(0, history.CurrentStreak(today.AddDays(3)), "连击断档后应为 0");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S11 色阶边界：0/2h/4h/6h/8h 各归对档", () =>
+{
+    AssertEqual(0, FocusHistory.HeatLevel(TimeSpan.Zero), "0 应为 0 档");
+    AssertEqual(1, FocusHistory.HeatLevel(TimeSpan.FromMinutes(1)), "1 分钟应为 1 档");
+    AssertEqual(1, FocusHistory.HeatLevel(TimeSpan.FromHours(2) - TimeSpan.FromSeconds(1)), "差一秒 2h 应为 1 档");
+    AssertEqual(2, FocusHistory.HeatLevel(TimeSpan.FromHours(2)), "恰 2h 应为 2 档");
+    AssertEqual(3, FocusHistory.HeatLevel(TimeSpan.FromHours(4)), "恰 4h 应为 3 档");
+    AssertEqual(4, FocusHistory.HeatLevel(TimeSpan.FromHours(6)), "恰 6h 应为 4 档");
+    AssertEqual(5, FocusHistory.HeatLevel(TimeSpan.FromHours(8)), "恰 8h 应为 5 档");
+    AssertEqual(5, FocusHistory.HeatLevel(TimeSpan.FromHours(9)), "9h 应为 5 档");
+});
+
+Check("S12 筛选窗口：7 天/30 天/全部的自然日天数（含端点）", () =>
+{
+    var dir = NewTempDir("stat-range");
+    try
+    {
+        var history = FocusHistory.Load(Path.Combine(dir, "history.json"));
+        var today = new DateOnly(2026, 10, 25);
+        var first = today.AddDays(-13);
+        history.TryAppend(new FocusSession(
+            At(first.Year, first.Month, first.Day, 9, 0), At(first.Year, first.Month, first.Day, 10, 0)));
+
+        AssertEqual(today.AddDays(-6), history.RangeStart(StatsRange.Last7Days, today), "7 天窗口起点不对");
+        AssertEqual(today.AddDays(-29), history.RangeStart(StatsRange.Last30Days, today), "30 天窗口起点不对");
+        AssertEqual(first, history.RangeStart(StatsRange.All, today), "全部窗口起点应为最早记录日");
+
+        AssertEqual(7, today.DayNumber - history.RangeStart(StatsRange.Last7Days, today).DayNumber + 1, "7 天窗口天数不对");
+        AssertEqual(30, today.DayNumber - history.RangeStart(StatsRange.Last30Days, today).DayNumber + 1, "30 天窗口天数不对");
+        AssertEqual(14, today.DayNumber - first.DayNumber + 1, "全部窗口天数不对");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S13 补记按输入时长入账并归属当天（核心）", () =>
+{
+    var dir = NewTempDir("stat-backfill");
+    try
+    {
+        var history = FocusHistory.Load(Path.Combine(dir, "history.json"));
+        var now = At(2026, 10, 25, 15, 0);
+        AssertTrue(history.TryBackfill(TimeSpan.FromMinutes(90), now), "补记失败");
+
+        var sessions = ReloadHistory(dir).Sessions;
+        AssertEqual(1, sessions.Count, "补记应写入一条记录");
+        AssertEqual(new DateOnly(2026, 10, 25), sessions[0].StartDay, "补记应归属当天");
+        AssertEqual(TimeSpan.Zero, sessions[0].StartedAt.LocalDateTime.TimeOfDay, "补记会话应锚在当日零点起算");
+        AssertEqual(TimeSpan.FromMinutes(90), sessions[0].Duration, "入账时长与输入不符");
+        AssertEqual(TimeSpan.FromMinutes(90), ReloadHistory(dir).TotalOn(new DateOnly(2026, 10, 25)), "重读文件后总时长不对");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S14 多次补记按输入时长直接累加", () =>
+{
+    var dir = NewTempDir("stat-backfill-multi");
+    try
+    {
+        var history = FocusHistory.Load(Path.Combine(dir, "history.json"));
+        var now = At(2026, 10, 25, 20, 0);
+        AssertTrue(history.TryBackfill(TimeSpan.FromHours(2), now), "第一次补记失败");
+        AssertTrue(history.TryBackfill(TimeSpan.FromHours(1), now), "第二次补记失败");
+
+        var reloaded = ReloadHistory(dir);
+        AssertEqual(2, reloaded.Sessions.Count, "每次补记各一条记录");
+        AssertEqual(TimeSpan.FromHours(3), reloaded.TotalOn(new DateOnly(2026, 10, 25)), "多次补记总量应为各次之和");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S15 非法补记被拒绝且不改动已有数据", () =>
+{
+    var dir = NewTempDir("stat-backfill-invalid");
+    try
+    {
+        var history = FocusHistory.Load(Path.Combine(dir, "history.json"));
+        var now = At(2026, 10, 25, 15, 0);
+        AssertTrue(history.TryBackfill(TimeSpan.FromHours(1), now), "前置的正常补记失败");
+
+        AssertTrue(!history.TryBackfill(TimeSpan.Zero, now), "0 时长应被拒绝");
+        AssertTrue(!history.TryBackfill(TimeSpan.FromMinutes(-30), now), "负时长应被拒绝");
+        AssertTrue(!history.TryBackfill(TimeSpan.FromHours(24).Add(TimeSpan.FromSeconds(1)), now), "超过 24 小时应被拒绝");
+        AssertTrue(history.TryBackfill(TimeSpan.FromHours(24), now), "恰好 24 小时应放行");
+
+        var reloaded = ReloadHistory(dir);
+        AssertEqual(2, reloaded.Sessions.Count, "只有两次合法补记应写入");
+        AssertEqual(TimeSpan.FromHours(25), reloaded.TotalOn(new DateOnly(2026, 10, 25)), "总量应为两次合法补记之和");
+    }
+    finally { Nuke(dir); }
+});
+
+Check("S16 补记与正常会话互不干扰，补记后当天计入连续天数", () =>
+{
+    var dir = NewTempDir("stat-backfill-mix");
+    try
+    {
+        var history = FocusHistory.Load(Path.Combine(dir, "history.json"));
+        var today = new DateOnly(2026, 10, 25);
+        AssertTrue(history.TryAppend(new FocusSession(At(2026, 10, 25, 9, 0), At(2026, 10, 25, 11, 0))), "前置的正常会话写入失败");
+        AssertTrue(history.TryBackfill(TimeSpan.FromHours(2), At(2026, 10, 25, 15, 0)), "补记失败");
+
+        AssertEqual(TimeSpan.FromHours(4), history.TotalOn(today), "正常会话与补记应相加");
+        AssertEqual(1, history.CurrentStreak(today), "补记后当天应为活跃天");
+    }
+    finally { Nuke(dir); }
+});
+
 Console.WriteLine();
 Console.WriteLine($"====  通过 {passed} 项，失败 {failures.Count} 项  ====");
 if (failures.Count > 0)

@@ -1,0 +1,256 @@
+<Window x:Class="FocusGuard.App.StatsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:FocusGuard.App"
+        Title="FocusGuard 统计"
+        Width="1280" Height="720"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        FontFamily="Microsoft YaHei UI, Segoe UI"
+        UseLayoutRounding="True">
+
+    <Window.Resources>
+        <!-- 胶囊分段按钮（单选）：选中变主蓝底白字，用于时间筛选与图表模式两组开关 -->
+        <Style x:Key="SegmentButton" TargetType="RadioButton">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Bd" CornerRadius="13" Background="#EEF1F4" Padding="14,4">
+                            <ContentPresenter VerticalAlignment="Center"
+                                              TextElement.Foreground="#374151" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#185FA5" />
+                                <Setter TargetName="Bd" Property="TextElement.Foreground" Value="White" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.88" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 指标卡片：白底圆角，上弱化标题、下数值（紧凑尺寸） -->
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="BorderBrush" Value="#E5E7EB" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="Margin" Value="5" />
+        </Style>
+
+        <Style x:Key="CardTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="#9CA3AF" />
+        </Style>
+
+        <Style x:Key="CardValue" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="17" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#374151" />
+            <Setter Property="Margin" Value="0,3,0,0" />
+        </Style>
+
+        <Style x:Key="ChartCaption" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#374151" />
+            <Setter Property="Margin" Value="6,14,0,6" />
+        </Style>
+    </Window.Resources>
+
+    <Border x:Name="Root"
+            CornerRadius="16"
+            Background="#FAFAFA"
+            BorderBrush="#E5E7EB"
+            BorderThickness="1"
+            MouseLeftButtonDown="Root_MouseLeftButtonDown">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <DockPanel Grid.Row="0" Margin="20,14,12,0">
+                <!-- 补记键：忘开专注时手动补记当天时长（专注统计方案 §5.6） -->
+                <Button x:Name="BackfillButton"
+                        DockPanel.Dock="Right"
+                        Content="补记时长"
+                        Height="24"
+                        FontSize="12"
+                        Margin="0,1,8,0"
+                        Foreground="#185FA5"
+                        Background="#EEF1F4"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        FocusVisualStyle="{x:Null}"
+                        ToolTip="忘记点开始专注？把漏记的时长补进今天"
+                        Click="BackfillButton_Click">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" CornerRadius="12" Background="{TemplateBinding Background}" Padding="12,0">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  TextElement.Foreground="{TemplateBinding Foreground}" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Opacity" Value="0.86" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <Button x:Name="CloseButton"
+                        DockPanel.Dock="Right"
+                        Content="✕"
+                        Width="26" Height="26"
+                        FontSize="13"
+                        Foreground="#B4B2A9"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        FocusVisualStyle="{x:Null}"
+                        Click="Cancel_Click">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="Transparent">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  TextElement.Foreground="{TemplateBinding Foreground}" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <TextBlock Text="统计"
+                           FontSize="12"
+                           Foreground="#9CA3AF"
+                           VerticalAlignment="Center" />
+            </DockPanel>
+
+            <ScrollViewer Grid.Row="1" Margin="20,4,20,4" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <!-- 左：时间筛选（作用于卡片与脚注）；右：图表模式（同时作用于两张图） -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal">
+                            <RadioButton x:Name="RangeAll"
+                                         Style="{StaticResource SegmentButton}"
+                                         GroupName="Range" Content="全部"
+                                         IsChecked="True" Checked="Range_Checked" />
+                            <RadioButton x:Name="Range30"
+                                         Style="{StaticResource SegmentButton}"
+                                         GroupName="Range" Content="30天"
+                                         Margin="8,0,0,0" Checked="Range_Checked" />
+                            <RadioButton x:Name="Range7"
+                                         Style="{StaticResource SegmentButton}"
+                                         GroupName="Range" Content="7天"
+                                         Margin="8,0,0,0" Checked="Range_Checked" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <RadioButton x:Name="ModeBars"
+                                         Style="{StaticResource SegmentButton}"
+                                         GroupName="ChartMode" Content="柱状图"
+                                         IsChecked="True" Checked="ChartMode_Checked" />
+                            <RadioButton x:Name="ModeLine"
+                                         Style="{StaticResource SegmentButton}"
+                                         GroupName="ChartMode" Content="折线图"
+                                         Margin="8,0,0,0" Checked="ChartMode_Checked" />
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- 6 张指标卡片，随筛选重算（语义见 专注统计设计方案 §5.4） -->
+                    <UniformGrid Rows="2" Columns="3" Margin="0,4,0,0">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource CardTitle}" Text="专注总时长" />
+                                <TextBlock x:Name="CardTotal" Style="{StaticResource CardValue}" Text="0分钟" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource CardTitle}" Text="日均专注时长" />
+                                <TextBlock x:Name="CardDaily" Style="{StaticResource CardValue}" Text="0分钟/天" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource CardTitle}" Text="最高单日时长" />
+                                <TextBlock x:Name="CardPeak" Style="{StaticResource CardValue}" Text="0分钟" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource CardTitle}" Text="活跃天数" />
+                                <TextBlock x:Name="CardActive" Style="{StaticResource CardValue}" Text="0 天" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource CardTitle}" Text="最长连续天数" />
+                                <TextBlock x:Name="CardLongest" Style="{StaticResource CardValue}" Text="0 天" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource CardTitle}" Text="当前连续天数" />
+                                <TextBlock x:Name="CardCurrent" Style="{StaticResource CardValue}" Text="0 天" />
+                            </StackPanel>
+                        </Border>
+                    </UniformGrid>
+
+                    <!-- 近一年每日热力图（控件内部整体水平居中） -->
+                    <local:HeatmapControl x:Name="Heatmap"
+                                          Margin="6,10,0,0" />
+
+                    <!-- 近 7 天（按天）与 近 8 周（按周，周一为周首） -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Style="{StaticResource ChartCaption}" Text="近 7 天" />
+                            <local:TrendChartControl x:Name="DailyChart" Height="160" Margin="6,0,6,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Style="{StaticResource ChartCaption}" Text="近 8 周" />
+                            <!-- 周汇总量程下限 = 2h × 7 天：空数据时周图不与日图共用 2h 基准 -->
+                            <local:TrendChartControl x:Name="WeeklyChart" Height="160" Margin="6,0,6,0"
+                                                     AxisFloorHours="14" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </ScrollViewer>
+
+            <TextBlock x:Name="FooterText"
+                       Grid.Row="2"
+                       Text=""
+                       FontSize="11"
+                       Foreground="#B4B2A9"
+                       Margin="24,0,24,14"
+                       TextAlignment="Center" />
+        </Grid>
+    </Border>
+</Window>

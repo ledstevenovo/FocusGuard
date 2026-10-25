@@ -82,6 +82,35 @@
                     </Button.Template>
                 </Button>
 
+                <!-- 统计键：柱状图字形（同属 Fluent/MDL2 图标字体，见下方设置键的说明） -->
+                <Button x:Name="StatsButton"
+                        DockPanel.Dock="Right"
+                        Content="&#xE9D9;"
+                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                        Width="26" Height="26"
+                        FontSize="13"
+                        Foreground="#B4B2A9"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        FocusVisualStyle="{x:Null}"
+                        ToolTip="专注统计"
+                        Click="StatsButton_Click">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="Transparent">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  TextElement.Foreground="{TemplateBinding Foreground}" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
                 <!-- 设置键：齿轮用系统图标字体（Fluent/MDL2）的字形。不能用 Unicode 的 ⚙(U+2699)：
                      它带 Emoji 属性，Win11 上会被 Segoe UI Emoji 抢走渲染成彩色"花瓣"；
                      E713 在私有区（PUA），只会命中图标字体，必定是单色齿轮。 -->
@@ -155,6 +184,15 @@
                            FontSize="12"
                            Foreground="#9CA3AF"
                            Margin="0,16,0,0"
+                           HorizontalAlignment="Center" />
+
+                <!-- 今日累计：已完成会话总和 + 进行中会话实时时长（专注统计方案 §4），
+                     可见性跟随 ShowElapsed —— 两者都是时长展示，尊重同一份"不想看见时长"的选择 -->
+                <TextBlock x:Name="TodayText"
+                           Text=""
+                           FontSize="12"
+                           Foreground="#9CA3AF"
+                           Margin="0,4,0,0"
                            HorizontalAlignment="Center" />
 
                 <!-- 随手记：专注期间想到的事。纯内存 UI，代码里从不读写它的 Text，
