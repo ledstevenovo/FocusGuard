@@ -187,6 +187,8 @@ public partial class MainWindow : Window
         CloseButton.IsEnabled = false;
         // 期间会弹以本窗口为 owner 的 MessageBox，而 owner 最小化时弹窗可能被压在后面看不到
         MinimizeButton.IsEnabled = false;
+        // 设置页会改配置并落盘，操作进行中打开会与锁定/解除交错，同样禁用
+        SettingsButton.IsEnabled = false;
         ActionButton.Content = text;
     }
 
@@ -196,6 +198,7 @@ public partial class MainWindow : Window
         ActionButton.IsEnabled = true;
         CloseButton.IsEnabled = true;
         MinimizeButton.IsEnabled = true;
+        SettingsButton.IsEnabled = true;
         ApplyVisualState();
     }
 
@@ -385,6 +388,26 @@ public partial class MainWindow : Window
     }
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
+
+    /// <summary>
+    /// 打开设置页。设置页编辑工作副本、保存时才写回并落盘；主窗口与控制器共享同一个
+    /// 配置对象，保存后下一次开始/结束自然用新值。busy 期间按钮已被禁用，
+    /// 因此这里不会与锁定/解除交错；专注进行中允许打开（会提示更改下次生效）。
+    /// </summary>
+    private void SettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var settings = new SettingsWindow(_controller.Config, AppPaths.ConfigPath, _controller.IsLockedNow)
+        {
+            Owner = this,
+        };
+        settings.ShowDialog();
+
+        if (settings.DialogResult == true)
+        {
+            // 域名数量等摘要行可能已变，刷新底部状态
+            ApplyVisualState();
+        }
+    }
 
     /// <summary>
     /// 最小化到任务栏。不影响任何强制手段（hosts / 改名 / 结束进程都在窗口之外生效），

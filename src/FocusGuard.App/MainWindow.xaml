@@ -82,6 +82,37 @@
                     </Button.Template>
                 </Button>
 
+                <!-- 设置键：齿轮用系统图标字体（Fluent/MDL2）的字形。不能用 Unicode 的 ⚙(U+2699)：
+                     它带 Emoji 属性，Win11 上会被 Segoe UI Emoji 抢走渲染成彩色"花瓣"；
+                     E713 在私有区（PUA），只会命中图标字体，必定是单色齿轮。 -->
+                <Button x:Name="SettingsButton"
+                        DockPanel.Dock="Right"
+                        Content="&#xE713;"
+                        FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                        Width="26" Height="26"
+                        FontSize="13"
+                        Foreground="#B4B2A9"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        FocusVisualStyle="{x:Null}"
+                        ToolTip="设置屏蔽的网站与程序"
+                        Click="SettingsButton_Click">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="Transparent">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  TextElement.Foreground="{TemplateBinding Foreground}" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="Bd" Property="Opacity" Value="0.45" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
                 <TextBlock x:Name="TitleText"
                            Text="FocusGuard"
                            FontSize="12"
